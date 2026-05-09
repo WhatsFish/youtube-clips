@@ -126,21 +126,29 @@ def format_transcript(entries: list[tuple[float, str]]) -> str:
 
 # ---- Prompt -----------------------------------------------------------------
 
-PROMPT_TEMPLATE = """你是一个面向中文受众的科技频道剪辑师。频道定位与风格在 PROFILE 中。
+PROMPT_TEMPLATE = """你是一个面向中文受众的 Bilibili 科技频道 UP 主。频道定位与风格在 PROFILE 中。
 
-任务：基于下面这一支英文科技 YouTube 视频的字幕，做三件事：
-  1. **过滤判断**：这支视频是否值得做成中文 commentary 视频？理由是什么？
-  2. **选段**：如果值得做，从字幕里挑出 5-10 个最有信息量、最适合做素材的片段。每段 8-25 秒。可以跳着挑，不必按顺序。
-  3. **中文解说**：在每个片段之间写一段中文 narration，把英文素材"串"起来——既翻译关键信息，又加你自己的解读和观点。还需要写片头开场白和片尾收尾。
+输出格式：**连续中文解说**，源视频做 B-roll（视觉素材）。**不是**"放一段源视频，然后中文解说一段，再放一段源视频"——那种格式没意义。正确的格式是：
+  - 中文解说不间断，从头到尾流畅连贯，像 UP 主在镜头外讲解
+  - 源视频画面按解说内容选段，作为视觉支撑（你解说什么，画面就给什么）
+  - 源视频的英文原声会被压到 ~10% 做背景气氛，中文解说是主音轨
+  - 视频是分镜（shots）的序列：每个 shot = 一句中文解说 + 对应的源视频时间段；shot 切换 = 解说推进到下一个意思
+
+任务：基于下面这支英文科技 YouTube 视频的字幕：
+  1. **过滤判断**：这支视频是否值得做成中文 commentary？理由是什么？
+  2. **写解说脚本**：把整支视频的精华提炼成一篇连贯的中文解说，像在跟观众讲一个故事。**不要逐句翻译**——挑重点、加你自己的解读和观点。语气：年轻、专业、有态度，可以用"划重点""反常识的是""值得注意的是""这就有意思了"这种连接词。
+  3. **拆分成 shots**：把解说脚本按"换一个意思"切成 8-15 个 shot。每个 shot 包含一句话（建议 15-50 个中文字，对应 4-12 秒朗读时长），以及它对应的源视频时间段——观众听到这句话时画面应该在讲什么。
 
 输出约束：
-  - 中文 narration 语速按 ~4 字/秒 估算 est_duration_sec，单段建议 4-12 秒，对应 16-48 字
-  - 总成片时长（所有 clip 时长 + 所有 narration 时长之和）目标 3-6 分钟
-  - clip 的 start_sec / end_sec 必须从下面字幕里出现过的时间戳取值
-  - 不要逐字翻译，commentary 风格要有自己的观点（比如"这其实意味着…""值得注意的是…""这个对比很有趣…"）
-  - 风格：专业但不刻板，可以有观点
+  - **解说连贯不断**：把所有 shot 的 narration 拼起来读出来应该是一篇通顺的中文，过渡自然
+  - **shot 数量 8-15 个**，第一个 shot 是 hook（钩子开场），最后一个 shot 是收尾观点
+  - **source_start_sec 必须从下面字幕里出现过的时间戳里取**——你要"指"着源视频的某个时间点说"看这里"
+  - 总时长（所有 narration 朗读时间之和）目标 3-5 分钟
+  - 不要片头黑屏、不要片尾黑屏——所有时间都有源视频画面在播
 
 只输出一个 JSON，包在 ```json ... ``` 代码块里。其它任何说明文字都不要。
+
+**重要：JSON 字符串内部如果要用引号做强调，必须用中文引号「」或弯引号""，不要用 ASCII 双引号 `"`，否则会破坏 JSON 语法。**
 
 JSON schema:
 {{
@@ -149,17 +157,16 @@ JSON schema:
   "title_zh": "中文标题，12-25 字，带钩子",
   "description_zh": "中文简介 1-2 句",
   "tags_zh": ["标签1", "标签2", ...],
-  "narration_intro": {{"text": "片头中文，10-30 字", "est_duration_sec": 数字}},
-  "segments": [
+  "shots": [
     {{
-      "clip": {{"start_sec": 数字, "end_sec": 数字, "purpose": "为什么用这段，中文一句话"}},
-      "narration_after": {{"text": "本段后面的中文解说", "est_duration_sec": 数字}}
+      "narration": "本 shot 的中文解说（15-50 字）",
+      "source_start_sec": 数字,
+      "purpose": "选这段画面的原因，中文一句话"
     }}
-  ],
-  "narration_outro": {{"text": "片尾中文", "est_duration_sec": 数字}}
+  ]
 }}
 
-如果 decision = "skip"，可省略其它字段。
+如果 decision = "skip"，可省略 shots 等字段。
 
 ================ PROFILE ================
 {profile_json}
@@ -195,6 +202,63 @@ def build_prompt(
 JSON_BLOCK_RE = re.compile(r"```json\s*(\{.*?\})\s*```", re.DOTALL)
 
 
+def _escape_embedded_quotes(s: str) -> str:
+    """Walk a JSON-ish blob and escape any ASCII double-quote that appears
+    inside a string value but isn't the actual string terminator. Claude
+    routinely embeds ASCII `"..."` for emphasis inside Chinese narration,
+    which lands in a JSON string and breaks json.loads.
+
+    A `"` is a legitimate string terminator iff the next non-whitespace
+    char is one of ,:}] (or end-of-input). Anything else means the `"` is
+    embedded literally and we must escape it as \\".
+    """
+    out: list[str] = []
+    i = 0
+    n = len(s)
+    in_str = False
+    while i < n:
+        c = s[i]
+        if not in_str:
+            out.append(c)
+            if c == '"':
+                in_str = True
+            i += 1
+            continue
+        if c == "\\" and i + 1 < n:
+            out.append(c)
+            out.append(s[i + 1])
+            i += 2
+            continue
+        if c == '"':
+            j = i + 1
+            while j < n and s[j] in " \t\r\n":
+                j += 1
+            if j >= n or s[j] in ",:}]":
+                out.append(c)
+                in_str = False
+                i += 1
+            else:
+                out.append('\\"')
+                i += 1
+            continue
+        # Also escape raw newlines inside strings — JSON forbids them.
+        if c == "\n":
+            out.append("\\n")
+            i += 1
+            continue
+        if c == "\r":
+            out.append("\\r")
+            i += 1
+            continue
+        if c == "\t":
+            out.append("\\t")
+            i += 1
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
 def call_claude(prompt: str) -> str:
     """Run `claude -p` with the prompt on stdin via a temp file. Returns stdout."""
     proc = subprocess.run(
@@ -218,12 +282,14 @@ def call_claude(prompt: str) -> str:
 def extract_json(s: str) -> dict:
     m = JSON_BLOCK_RE.search(s)
     if not m:
-        # Fallback: try to find a top-level {...} block.
         m2 = re.search(r"(\{.*\})", s, re.DOTALL)
         if not m2:
             raise ValueError("no JSON found in claude output")
-        return json.loads(m2.group(1))
-    return json.loads(m.group(1))
+        body = m2.group(1)
+    else:
+        body = m.group(1)
+    body = _escape_embedded_quotes(body)
+    return json.loads(body)
 
 
 # ---- Driver ----------------------------------------------------------------
@@ -286,18 +352,13 @@ def main() -> int:
     print(f"  decision: {edl.get('decision')}")
     print(f"  reason:   {edl.get('decision_reason', '')[:100]}")
     if edl.get("decision") == "make":
-        segs = edl.get("segments", [])
+        shots = edl.get("shots", [])
         print(f"  title_zh: {edl.get('title_zh', '')}")
-        print(f"  segments: {len(segs)}")
-        clip_total = sum(s["clip"]["end_sec"] - s["clip"]["start_sec"] for s in segs)
-        nar_total = (
-            edl["narration_intro"]["est_duration_sec"]
-            + sum(s["narration_after"]["est_duration_sec"] for s in segs)
-            + edl["narration_outro"]["est_duration_sec"]
-        )
-        print(f"  clip time:      {clip_total:.1f}s")
-        print(f"  narration time: {nar_total:.1f}s")
-        print(f"  est. total:     {clip_total + nar_total:.1f}s ({(clip_total + nar_total)/60:.1f} min)")
+        print(f"  shots:    {len(shots)}")
+        total_chars = sum(len(s["narration"]) for s in shots)
+        # ~4 chars/sec at ~+15% rate is ~4.6 chars/sec; conservatively 4.
+        est_sec = total_chars / 4.0
+        print(f"  narration: {total_chars} chars (~{est_sec:.0f}s @ 4chars/sec, ~{est_sec/60:.1f} min)")
     print("=" * 60)
     return 0
 
