@@ -22,7 +22,8 @@ Phase 2 — MVP pipeline                                  ███████�
   ├ prompts as files + Profile read from DB             ████████████  done
   ├ source discovery agent (2.3)                        ████████████  done
   ├ 2nd Profile (finance) + prompt v3 (domain-neutral)  ████████████  done
-  ├ download / transcribe modules (2.4 / 2.5)           ░░░░░░░░░░░░  not started
+  ├ download / transcribe modules (2.4 / 2.5)           ████████████  done
+  ├ produce.py — single-command full chain              ████████████  done
   ├ DB-backed jobs/sources/outputs (productionize)      ░░░░░░░░░░░░  not started
   └ cleanup cron + multi-platform fan-out               ░░░░░░░░░░░░  not started
 Phase 3+ — quality, topics, feedback loop               ░░░░░░░░░░░░  not started
@@ -33,7 +34,9 @@ The Phase 2 sub-tasks below carry ✅ for the ones that have shipped and ☐ for
 ### Known operational drag
 
 - **YouTube cookies need manual refresh per download burst.** YouTube's anti-bot is much more aggressive against Azure datacenter IPs than against residential ones. Even freshly-exported, valid cookies (containing `__Secure-3PSID` etc.) get rejected within hours — sometimes within minutes — when used from this VM. Symptom: yt-dlp returns `Sign in to confirm you're not a bot`. Workaround for now: re-export `~/.config/youtube-clips-cookies.txt` from a logged-in browser whenever yt-dlp errors out. Real fix (deferred): residential proxy or local-download-+-sync workflow. This is the blocker for putting downloads under cron.
-- **Run the chain manually for now.** `discover-source.py` → human runs yt-dlp (refresh cookies if needed) → `edl-prototype.py` → `edl-render.py`. Web UI shows the result immediately at `/youtube-clips/`.
+- **`scripts/produce.py` is the single-command entry point** for the full chain (discover → download → EDL → render). It's idempotent — re-run after a cookie refresh and earlier steps either cache-hit or harmlessly overwrite. Web UI shows the result immediately at `/youtube-clips/`. Two flags:
+  - `--topic "..."` runs discovery first.
+  - `--video-id <id>` skips discovery for an already-known video; `videos.list` fetches title/channel automatically (1 quota unit).
 
 ---
 
@@ -329,8 +332,8 @@ feedback            -- user regenerate instructions
 | 2.1 | Migrations: full schema (`profiles` + `topics`/`sources`/`jobs`/`outputs`/`feedback`) | sql | ✅ |
 | 2.2 | Seed demo Profile `tech-insights-cn` | sql | ✅ (also `db/seeds/update-…sql` for evolving the row in place) |
 | 2.3 | Source discovery agent: YouTube Data API search + metadata filter + Claude pick | Python | ✅ via `scripts/discover-source.py` (uses `pipeline/youtube_search.py` + `prompts/source-pick.v1.md`); transcript-based ranking deferred to v2 of the prompt if needed |
-| 2.4 | Downloader: yt-dlp → `/video/youtube-clips/raw/<id>/` | yt-dlp | ☐ — single-shot proven by `scripts/hello-render.py` (cookies + deno + EJS) |
-| 2.5 | Transcriber: prefer YouTube native captions; fallback Groq Whisper API | groq | ☐ — VTT path proven inside `scripts/edl-prototype.py` |
+| 2.4 | Downloader: yt-dlp → `/video/youtube-clips/raw/<id>/` | yt-dlp | ✅ via `pipeline/downloader.py` (idempotent; raises `BotWallError` / `CookiesMissingError` so callers can give precise errors) |
+| 2.5 | Transcriber: prefer YouTube native captions; fallback Groq Whisper API | groq | ✅ via `pipeline/transcript.py` for the YouTube native VTT path. Groq Whisper fallback for videos without captions deferred until we hit one |
 | 2.6 | Translator: Claude (transcript → adapted Chinese commentary) | claude | ✅ via `scripts/edl-prototype.py` (file-based prompt + DB Profile) |
 | 2.7 | Edit decision agent: Claude → EDL JSON | claude | ✅ same script as 2.6 (single-pass) |
 | 2.8 | TTS: Azure Speech (Chinese voice from Profile) → mp3 | azure-speech | ✅ via `scripts/edl-render.py` |
@@ -492,6 +495,8 @@ VM resize (if executed Phase 2+): +$60–150/mo on top.
     profiles.py                      # fetch Profile from Postgres
     claude_io.py                     # call_claude + extract_json (sanitizer)
     youtube_search.py                # YouTube Data API v3 search + enrich
+    downloader.py                    # yt-dlp wrapper (cookies + EJS); idempotent
+    transcript.py                    # WebVTT parsing (dedup typing-anim quirk)
   prompts/                           # LLM prompts as data, not code
     edl-continuous.v3.md             # current EDL default (domain-neutral)
     edl-continuous.v2.md             # fallback (tech-shaped body)
@@ -504,6 +509,7 @@ VM resize (if executed Phase 2+): +$60–150/mo on top.
       update-tech-insights-cn.sql    # one-shot UPDATE for evolving the tech seed
       insert-finance-insights-cn.sql # 2nd Profile insert/upsert
   scripts/                           # CLI entrypoints (no daemons)
+    produce.py                       # ★ single-command full chain
     hello-render.py                  # standalone yt-dlp+ffmpeg+TTS smoke
     discover-source.py               # topic → search → Claude pick → JSON
     edl-prototype.py                 # transcript → Claude → EDL JSON
