@@ -1,0 +1,10 @@
+.env
+.venv/
+node_modules/
+.next/
+*.log
+__pycache__/
+
+# Runtime artifacts — DB and /video/youtube-clips/ are the source of truth.
+input/
+output/
