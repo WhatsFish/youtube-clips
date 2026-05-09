@@ -181,7 +181,7 @@ feedback            -- user regenerate instructions
 | 1.4 | Next.js 14 App Router + Tailwind + pg, container on `traffic-monitor_default`, `output: standalone` |
 | 1.5 | site-index navigation entry |
 | 1.6 | /status group: HTTP probe + DB freshness + cron heartbeats; register `/video` disk check |
-| 1.7 | `~/.config/youtube-clips.env`: `YT_API_KEY`, `ANTHROPIC_API_KEY`, `AZURE_SPEECH_KEY`, `GROQ_API_KEY`, DB creds |
+| 1.7 | `~/.config/youtube-clips.env`: `YT_API_KEY`, `AZURE_SPEECH_KEY`, `GROQ_API_KEY`, DB creds (Claude is invoked via the `claude` CLI which uses its own auth — no `ANTHROPIC_API_KEY` needed) |
 | 1.8 | Umami site (manual via Umami UI to get website-id) |
 | 1.9 | `run-agent.sh` template; cost-tracker hook |
 
