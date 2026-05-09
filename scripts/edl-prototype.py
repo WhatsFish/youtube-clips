@@ -340,6 +340,9 @@ def main() -> int:
     print(f"claude returned in {elapsed:.1f}s, {len(raw)} chars")
 
     edl = extract_json(raw)
+    # Stamp the Profile name into the EDL so downstream tooling (web UI,
+    # render module) can group / filter without consulting the DB.
+    edl.setdefault("profile_name", PROFILE["name"])
     edl_path = job_dir / "edl.json"
     edl_path.write_text(
         json.dumps(edl, ensure_ascii=False, indent=2), encoding="utf-8"

@@ -11,6 +11,7 @@ export type Shot = {
 
 export type Edl = {
   decision: string;
+  profile_name?: string;
   decision_reason?: string;
   title_zh?: string;
   description_zh?: string;
@@ -20,6 +21,7 @@ export type Edl = {
 
 export type Job = {
   id: string;
+  profileName: string;
   title: string | null;
   description: string | null;
   tags: string[];
@@ -28,6 +30,11 @@ export type Job = {
   renderSizeBytes: number | null;
   renderMtime: Date | null;
 };
+
+// Pre-Profile-stamping renders are assumed to belong to the only Profile
+// that existed at the time. Update this if a second Profile is seeded
+// before all legacy renders get backfilled.
+const DEFAULT_PROFILE_NAME = "tech-insights-cn";
 
 /**
  * Phase 2 prototype storage: each subdir under RENDERS_DIR is keyed by
@@ -76,6 +83,7 @@ export async function loadJob(id: string): Promise<Job | null> {
 
   return {
     id,
+    profileName: edl?.profile_name ?? DEFAULT_PROFILE_NAME,
     title: edl?.title_zh ?? null,
     description: edl?.description_zh ?? null,
     tags: edl?.tags_zh ?? [],
@@ -84,6 +92,15 @@ export async function loadJob(id: string): Promise<Job | null> {
     renderSizeBytes: renderStat.size,
     renderMtime: renderStat.mtime,
   };
+}
+
+export function groupByProfile(jobs: Job[]): Map<string, Job[]> {
+  const m = new Map<string, Job[]>();
+  for (const j of jobs) {
+    if (!m.has(j.profileName)) m.set(j.profileName, []);
+    m.get(j.profileName)!.push(j);
+  }
+  return m;
 }
 
 export function fmtMb(bytes: number | null): string {
