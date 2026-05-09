@@ -125,16 +125,22 @@ def main() -> int:
     )
     print(f"got:     {len(raw_candidates)} raw candidates")
 
-    # Hard-rule filter.
+    # Hard-rule filter. has_captions in the YT Data API only flags *manual*
+    # captions; auto-captions are virtually universal on English YouTube and
+    # yt-dlp picks them up via --write-auto-subs. Filtering on has_captions
+    # therefore over-rejects (especially for non-tech genres where channels
+    # don't upload manual transcripts). Filter on duration only here; the
+    # download stage will surface a clean error if a picked video genuinely
+    # has zero captions of any kind.
     filtered = [
         c
         for c in raw_candidates
-        if c.has_captions
-        and MIN_DURATION_SEC <= c.duration_sec <= MAX_DURATION_SEC
+        if MIN_DURATION_SEC <= c.duration_sec <= MAX_DURATION_SEC
     ]
     print(
-        f"filter:  {len(filtered)} pass (captions=true, "
-        f"duration {MIN_DURATION_SEC // 60}-{MAX_DURATION_SEC // 60}m)"
+        f"filter:  {len(filtered)} pass "
+        f"(duration {MIN_DURATION_SEC // 60}-{MAX_DURATION_SEC // 60}m; "
+        f"with-manual-captions: {sum(1 for c in filtered if c.has_captions)})"
     )
     if not filtered:
         sys.exit("no candidates pass the hard-rule filter")
