@@ -58,6 +58,110 @@ A new "channel" is a new Profile row, no code changes.
 
 ---
 
+## Profile model: three dimensions of style
+
+The Profile abstraction has to absorb three orthogonal dimensions of stylistic
+variation — mixing them up produces unmaintainable prompts and per-channel
+forks. The expanded schema below separates them so any single (Profile,
+Topic, Output) tuple resolves cleanly to one final prompt + one render config.
+
+| Dimension | Examples | Where it lives |
+|---|---|---|
+| **Channel** (persona / brand voice) | "professional tech UP" vs "tech meme channel"; voice; verbal tics | `Profile.channel` (defaults for everything) |
+| **Topic-class** (genre within a channel) | AI news vs hardware review vs tutorial — same channel, different cadence and tone | `Profile.topic_classes[<class>]` (overrides channel) |
+| **Platform-variant** (per-output overrides) | B 站长 vs 抖音 vs YT Shorts — same narration, different aspect / pacing / caption density | `Profile.output_variants[<platform>]` (overrides everything else) |
+
+### Expanded Profile schema (target shape; current seed uses the simpler subset)
+
+```yaml
+profile_id: tech-insights-cn
+
+# Channel-level defaults — apply when no topic_class / output_variant override
+channel:
+  voice: zh-CN-YunxiNeural
+  rate_pct: 15
+  tone: "年轻、专业、有态度，带轻微 hot take"
+  vocabulary: "技术术语直接用，不需要每个名词都解释"
+  hot_take_propensity: mild         # none | mild | strong
+  verbal_tics: ["划重点", "反常识的是", "这就有意思了"]
+  forbidden_phrases: ["大家好欢迎收看", "今天我们要讲"]
+  example_narrations:               # few-shot samples for prompt assembly
+    - "上周谷歌干了件 FAANG 大厂都不敢干的事..."
+    - ...
+
+# Topic-class overrides — pick a class on each Topic; absent → channel defaults
+topic_classes:
+  ai_news:
+    pacing_sec_per_shot: [6, 10]
+    hot_take_propensity: mild
+  hardware_review:
+    pacing_sec_per_shot: [8, 14]    # show the hardware longer
+    vocabulary: "性能数字必须给出，不能含糊"
+  tutorial:
+    hot_take_propensity: none
+    rate_pct: 0                     # slow it down for instruction
+
+# Output-variant overrides — one per target platform, fans out at render
+output_variants:
+  bilibili_long:
+    aspect_ratio: 16:9
+    length_target_min: [3, 8]
+    caption_strategy: burn_zh_static
+  bilibili_vertical:
+    aspect_ratio: 9:16
+    length_target_min: [0.5, 1]
+    caption_strategy: burn_zh_animated
+    hook_strategy: "前 1.5 秒必须有钩子"
+  douyin:
+    aspect_ratio: 9:16
+    length_target_min: [0.5, 1]
+    caption_strategy: burn_zh_animated_aggressive
+    rate_pct: 25                    # tolerance is lower; faster delivery
+
+# Branding (per-channel; can be platform-overridden)
+branding:
+  intro_path: null
+  outro_path: null
+  watermark: "@your-handle"
+
+# Free-text escape hatches — used when structured fields don't capture
+# something a particular channel needs.
+topic_generation_prompt: |
+  你为一个面向中文受众的科技频道选题 ...
+edit_style_prompt: |
+  你写 commentary 风格的 EDL ...
+```
+
+### Prompt assembly at runtime
+
+For each `(Profile, Topic, Output)` tuple, the agent's prompt is composed top-down with later layers overriding earlier ones:
+
+```
+final_prompt = base_prompt
+             ⊕ Profile.channel
+             ⊕ Profile.topic_classes[Topic.topic_class]    # override channel
+             ⊕ Profile.output_variants[Output.platform]    # override everything
+             ⊕ Profile.channel.example_narrations          # few-shot
+             ⊕ source transcript
+```
+
+A single source video that ships to (B 站长, B 站竖屏, 抖音) resolves to three independent EDLs and three render configs — but they share `channel.tone`, `forbidden_phrases`, and `verbal_tics`, so they sound like the same channel. Brand consistency comes from the `channel` layer; platform native-ness comes from the variant layer.
+
+### What's actually implemented vs. designed
+
+The current DB seed of `tech-insights-cn` uses a flatter `config_jsonb` (single voice, single platform, single style block). That's fine — `JSONB` accepts arbitrary shapes, so growing into the full schema above is a matter of writing it into existing rows, not a migration.
+
+Concrete rollout order:
+
+1. **Now** (Phase 2 demo): keep the current shape. One Profile, one variant, no topic-class.
+2. **When the second Profile lands** (e.g., a tutorial-style channel, or a non-tech topic): structure `channel` and `forbidden_phrases` then. Validate the layered model with two real concrete cases.
+3. **When fan-out to a 2nd platform is needed**: add `output_variants` and rev the renderer to iterate over them.
+4. **When a channel has multiple topic types**: add `topic_classes` + `topic_class` field on Topic.
+
+Each step is additive — no schema migration, just JSONB updates and prompt-assembly logic.
+
+---
+
 ## Cross-platform & cross-language strategy
 
 **Source/output platform pairing**: prefer cross-platform to reduce same-platform fingerprint detection. The demo Profile uses YouTube (English source) → Bilibili (Chinese output). The reverse direction (Bilibili source → YouTube output) is a future Profile.
