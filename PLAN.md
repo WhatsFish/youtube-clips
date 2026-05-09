@@ -339,8 +339,8 @@ feedback            -- user regenerate instructions
 | 2.8 | TTS: Azure Speech (Chinese voice from Profile) → mp3 | azure-speech | ✅ via `scripts/edl-render.py` |
 | 2.9 | Renderer: ffmpeg cut + duck original audio + overlay Chinese narration → 16:9 mp4 | ffmpeg | ✅ same script as 2.8 |
 | 2.10 | Web UI: `/youtube-clips/` (Profile-grouped list) + `/youtube-clips/jobs/[id]` preview + download | next | ✅ |
-| 2.11 | Cron: scan approved topics, run pipeline | cron | ☐ |
-| 2.12 | Cleanup cron: TTL delete `raw/` >7d, `clips/` >30d; heartbeat | cron | ☐ |
+| 2.11 | Cron: scan approved topics, run pipeline | cron | 🚧 blocked on cookies/IP — see operational drag callout |
+| 2.12 | Cleanup cron: TTL delete `raw/` >7d, `clips/` >30d; heartbeat | cron | ✅ via `scripts/cleanup-cron.sh` (`30 5 * * *`); registered in /status as `cron-youtube-clips-cleanup` |
 
 **Phase 2 productionization debt** (the prototype works end-to-end, but several pieces still need to be unified into the official pipeline):
 

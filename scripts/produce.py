@@ -38,11 +38,39 @@ from pipeline.prompts import load_prompt
 from pipeline.profiles import fetch_profile, Profile
 from pipeline.claude_io import call_claude, extract_json
 from pipeline.transcript import parse_vtt, format_transcript
-from pipeline.downloader import download, BotWallError, CookiesMissingError
+from pipeline.downloader import download, BotWallError, CookiesMissingError, COOKIES_FILE
 from pipeline.youtube_search import enrich
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DISCOVER_BASE = Path("/video/youtube-clips/outputs/discovered")
+
+
+def _fmt_age(seconds: float) -> str:
+    if seconds < 60:
+        return f"{int(seconds)}s"
+    if seconds < 3600:
+        return f"{int(seconds / 60)}m"
+    if seconds < 86400:
+        return f"{seconds / 3600:.1f}h"
+    return f"{seconds / 86400:.1f}d"
+
+
+def cookie_age_preflight() -> None:
+    """Print how stale ~/.config/youtube-clips-cookies.txt is. The
+    Azure-VM-vs-YouTube anti-bot dance means cookies usually only buy
+    you minutes-to-hours of valid downloads, not weeks. Surfacing the
+    age makes it obvious whether to refresh before kicking off the
+    chain (especially if you've burned a few downloads already today).
+    """
+    if not COOKIES_FILE.exists():
+        print("[cookies]  MISSING — yt-dlp will fail. Re-export from a logged-in browser.")
+        return
+    age_sec = time.time() - COOKIES_FILE.stat().st_mtime
+    label = _fmt_age(age_sec)
+    if age_sec > 3600:
+        print(f"[cookies]  last refresh: {label} ago — likely stale on this VM, refresh recommended")
+    else:
+        print(f"[cookies]  last refresh: {label} ago")
 
 
 def _slugify(s: str) -> str:
@@ -150,6 +178,7 @@ def main() -> int:
 
     # 2. Download.
     _stage_header("download")
+    cookie_age_preflight()
     try:
         result = download(video_id, force=args.force_download)
     except CookiesMissingError as e:
