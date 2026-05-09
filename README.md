@@ -72,6 +72,14 @@ ERROR: [youtube] ...: Sign in to confirm you're not a bot.
 
 Azure datacenter IPs have terrible reputation with YouTube. Even fresh, structurally-valid cookies (containing `__Secure-3PSID` etc.) get tossed once they've been used a few times from this VM. The right long-term fixes are residential proxy / local-download-+-rsync / VPN — see PLAN.md "productionization debt" for the deferred decision.
 
+### PO token provider (experiment in observation, 2026-05-09)
+
+A `pot-provider` docker service runs alongside `web` (port 4416, host-only). It's a small Node.js server that runs YouTube's BotGuard JS VM out-of-browser, mints PO (proof-of-origin) tokens, and serves them to yt-dlp via the `bgutil-ytdlp-pot-provider` pip plugin (already installed in `.venv`). The plugin engages automatically — no flags needed.
+
+The hypothesis being tested: with a valid PO token attached, YouTube's anti-abuse weighs our requests less harshly, and **fresh cookies survive longer** before getting rotated. We're observing how often manual refresh becomes necessary now compared to before.
+
+If `pot-provider` is down, downloads will likely hit the bot wall immediately. `docker compose up -d pot-provider` to revive.
+
 ---
 
 ## Watch / download a render

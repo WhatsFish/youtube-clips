@@ -12,6 +12,21 @@ services:
     ports:
       - "127.0.0.1:3008:3000"
 
+  # YouTube PO-token provider: a tiny Node.js server that runs the
+  # BotGuard JS VM out-of-browser, calls Google's WAA endpoint to mint
+  # an integrityToken, and serves the resulting PO token to yt-dlp via
+  # HTTP. Used in tandem with the `bgutil-ytdlp-pot-provider` pip
+  # plugin installed in the venv. Goal: make our datacenter-IP requests
+  # carry a valid attestation token so YouTube's anti-abuse weighs them
+  # less harshly. Doesn't change our IP — see PLAN.md "cookies/IP" for
+  # the framing.
+  pot-provider:
+    image: brainicism/bgutil-ytdlp-pot-provider:latest
+    init: true
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:4416:4416"
+
 # Reuse traffic-monitor's bridge so we can resolve the shared `db` container.
 networks:
   default:
