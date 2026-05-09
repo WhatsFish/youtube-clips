@@ -109,6 +109,66 @@ def format_transcript(entries: list[tuple[float, str]]) -> str:
     return "\n".join(out)
 
 
+# ---- Prompt placeholder builder -------------------------------------------
+
+# Map ISO-639-1 → display label used in narration. Add when you add a new
+# target_language to a Profile.
+_LANG_LABEL = {"zh": "中文", "en": "English"}
+
+
+def build_prompt_kwargs(profile, *, title, channel, duration, transcript):
+    """Pull every placeholder the prompt templates can ask for out of the
+    Profile config. Extras are harmless — str.format ignores keys the
+    template doesn't reference, so v2 (which only uses {profile_block}
+    et al.) still works alongside v3 (which uses the channel-driven set).
+    """
+    cfg = profile.config or {}
+    ch = cfg.get("channel") or {}
+    out = cfg.get("output") or {}
+
+    channel_position = ch.get("channel_position") or (
+        f"{out.get('language', 'zh')}-language commentary channel"
+    )
+    target_language_label = _LANG_LABEL.get(out.get("language", "zh"), out.get("language", "zh"))
+    tone_description = ch.get("tone") or "professional, engaged, opinionated where it earns it"
+
+    tics = ch.get("verbal_tics") or []
+    verbal_tics_example = (
+        "、".join(f"「{t}」" for t in tics) if tics else "（无频道指定，自由发挥）"
+    )
+
+    forb = ch.get("forbidden_phrases") or []
+    forbidden_phrases_block = (
+        "\n".join(f"      - 「{p}」" for p in forb)
+        if forb
+        else "      （无）"
+    )
+
+    disc_zh = ch.get("disclaimer_zh")
+    if ch.get("must_include_disclaimer") and disc_zh:
+        disclaimer_requirement = (
+            f"\n  - **收尾必须带免责声明**：在最后一个 shot 的 narration 末尾追加："
+            f"「{disc_zh}」"
+        )
+    else:
+        disclaimer_requirement = ""
+
+    return {
+        "profile_block": profile.render_block(),
+        "title": title,
+        "channel": channel,
+        "duration": int(duration),
+        "transcript": transcript,
+        # v3-specific
+        "channel_position": channel_position,
+        "target_language_label": target_language_label,
+        "tone_description": tone_description,
+        "verbal_tics_example": verbal_tics_example,
+        "forbidden_phrases_block": forbidden_phrases_block,
+        "disclaimer_requirement": disclaimer_requirement,
+    }
+
+
 # ---- Driver ---------------------------------------------------------------
 
 
@@ -165,11 +225,13 @@ def main() -> int:
     job_dir.mkdir(parents=True, exist_ok=True)
 
     prompt = prompt_tmpl.render(
-        profile_block=profile.render_block(),
-        title=args.title,
-        channel=args.channel,
-        duration=int(duration),
-        transcript=format_transcript(entries),
+        **build_prompt_kwargs(
+            profile,
+            title=args.title,
+            channel=args.channel,
+            duration=duration,
+            transcript=format_transcript(entries),
+        )
     )
     (job_dir / "prompt.txt").write_text(prompt, encoding="utf-8")
     print(f"prompt: {len(prompt)} chars → {job_dir / 'prompt.txt'}")

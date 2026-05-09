@@ -21,6 +21,7 @@ Phase 2 — MVP pipeline                                  ███████�
   ├ web review UI (home grouped by Profile, /jobs/[id]) ████████████  done
   ├ prompts as files + Profile read from DB             ████████████  done
   ├ source discovery agent (2.3)                        ████████████  done
+  ├ 2nd Profile (finance) + prompt v3 (domain-neutral)  ████████████  done
   ├ download / transcribe modules (2.4 / 2.5)           ░░░░░░░░░░░░  not started
   ├ DB-backed jobs/sources/outputs (productionize)      ░░░░░░░░░░░░  not started
   └ cleanup cron + multi-platform fan-out               ░░░░░░░░░░░░  not started
@@ -365,9 +366,27 @@ Three rules that pay off as the prompt count grows:
 
 1. **Frozen versions**. Don't edit a versioned prompt in place; copy to the next version. Old versions stay so you can A/B and so prior EDL outputs that reference them remain reproducible.
 2. **Stamp identity into outputs**. `edl-prototype.py` writes `prompt_template_version: "edl-continuous.v2"` and `profile_name: "tech-insights-cn"` and `rendered_at` into every `edl.json`. Every render is traceable to a (Profile row, prompt file) pair.
-3. **Profile drives values, prompt drives structure**. The prompt template is the *task* (filter + EDL + Chinese narration). The Profile is the *channel-specific tunables* (voice, tone, verbal_tics, edit_style_prompt). At runtime, `Profile.render_block()` is injected into the prompt template's `{profile_block}` slot. New channel = new Profile row; no prompt edit. Prompt iteration = bump the version; no DB change.
+3. **Profile drives values, prompt drives structure**. The prompt template is the *task* (filter + EDL + commentary). The Profile is the *channel-specific tunables* (voice, tone, verbal_tics, forbidden_phrases, disclaimer). At runtime, `pipeline.profiles` fetches the Profile, the script in `scripts/edl-prototype.py` builds a placeholder dict from it, and `Prompt.render(**kwargs)` substitutes them into the template. New channel = new Profile row; no prompt edit. Prompt iteration = bump the version; no DB change.
 
-`pipeline/profiles.py` reads from Postgres (no more code-side hardcoded copy). `pipeline/prompts.py` loads the markdown files. Both modules are thin.
+`pipeline/profiles.py` reads from Postgres (no more code-side hardcoded copy). `pipeline/prompts.py` loads the markdown files. `pipeline/claude_io.py` wraps the `claude -p` invocation + JSON sanitizing. All three modules are thin.
+
+### Validation: 2nd Profile → forced prompt v3 (2026-05-09)
+
+Adding `finance-insights-cn` (Bilibili finance commentary) as a sibling to `tech-insights-cn` immediately exposed v2 prompt drift: the body had **"Bilibili 科技频道 UP 主"** and **four tech-flavored verbal tics** hardcoded, both of which would override Profile config when the Profile was for a different domain. The prompt was secretly tech-shaped, not generic.
+
+**v3** (`prompts/edl-continuous.v3.md`) extracts those into placeholders:
+  - `{channel_position}` — `Profile.channel.channel_position`
+  - `{tone_description}` — `Profile.channel.tone`
+  - `{verbal_tics_example}` — `Profile.channel.verbal_tics` rendered as a list
+  - `{forbidden_phrases_block}` — `Profile.channel.forbidden_phrases` as bullets
+  - `{disclaimer_requirement}` — populated when `Profile.channel.must_include_disclaimer` is true (finance Profile sets this; tech doesn't)
+  - `{target_language_label}` — `Profile.output.language` mapped via `_LANG_LABEL`
+
+Smoke test: same Fireship/Gemma 4 source, run with both Profiles. Tech version reads as a tech explainer ("划重点", "反常识的是"). Finance version reframes the same source as a macro-competition story ("市场在 price in 的", "需要看一眼", "把账算清楚", "风险点在于"), drops every tech tic, never says "建议买入" or any other forbidden phrase, and ends with the disclaimer copied from `Profile.channel.disclaimer_zh`. Same prompt, same source, two distinct channel voices — by Profile data, not code. Saved alongside the canonical render as `edl.v3-tech.json` and `edl.v3-finance.json` for diffing.
+
+`scripts/discover-source.py` was also re-run with `--profile finance-insights-cn` on a finance topic; Bloomberg Television's Fed/Goolsbee segment was picked over generic AI content — content_hints + channel_position drove the discovery prompt to a different answer too.
+
+v2 stays in `prompts/` as a fallback (pass `--prompt-version 2` to use it). v3 is the default.
 
 ### Phase 3 — Quality enhancements
 
@@ -474,14 +493,16 @@ VM resize (if executed Phase 2+): +$60–150/mo on top.
     claude_io.py                     # call_claude + extract_json (sanitizer)
     youtube_search.py                # YouTube Data API v3 search + enrich
   prompts/                           # LLM prompts as data, not code
-    edl-continuous.v2.md             # current EDL default
+    edl-continuous.v3.md             # current EDL default (domain-neutral)
+    edl-continuous.v2.md             # fallback (tech-shaped body)
     source-pick.v1.md                # source-discovery agent default
     README.md                        # prompt versioning convention
   db/
     schema.sql                       # idempotent CREATE + INSERT-skip seed
     bootstrap.sh                     # apply schema as the youtube_clips role
     seeds/
-      update-tech-insights-cn.sql    # one-shot UPDATE for evolving the seed
+      update-tech-insights-cn.sql    # one-shot UPDATE for evolving the tech seed
+      insert-finance-insights-cn.sql # 2nd Profile insert/upsert
   scripts/                           # CLI entrypoints (no daemons)
     hello-render.py                  # standalone yt-dlp+ffmpeg+TTS smoke
     discover-source.py               # topic → search → Claude pick → JSON

@@ -51,5 +51,13 @@ EDL? `git log prompts/<file>` plus the EDL stamp is enough to reconstruct.
 
 ## Current prompts
 
-- `edl-continuous.v2.md` — Phase 2 default. Continuous Chinese
-  narration over source-as-B-roll. Used by `scripts/edl-prototype.py`.
+- `edl-continuous.v3.md` — current default. Domain-neutral version of
+  v2 — `channel_position` / `tone_description` / `verbal_tics_example` /
+  `forbidden_phrases_block` / `disclaimer_requirement` are placeholders
+  fed from the active Profile, so different Profiles produce visibly
+  different style without prompt edits.
+- `edl-continuous.v2.md` — kept as fallback. Tech-flavored verbal_tics
+  + "Bilibili 科技频道 UP 主" hardcoded in body; works for tech-insights-cn
+  but not other Profiles. Pass `--prompt-version 2` if you want to A/B.
+- `source-pick.v1.md` — used by `scripts/discover-source.py` for the
+  metadata-based source picker. Not affected by the v2→v3 evolution.
