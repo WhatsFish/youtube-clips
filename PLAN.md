@@ -24,7 +24,7 @@ Phase 2 — MVP pipeline                                  ███████�
   ├ 2nd Profile (finance) + prompt v3 (domain-neutral)  ████████████  done
   ├ download / transcribe modules (2.4 / 2.5)           ████████████  done
   ├ produce.py — single-command full chain              ████████████  done
-  ├ DB-backed jobs/sources/outputs (productionize)      ░░░░░░░░░░░░  not started
+  ├ DB-backed jobs/sources/outputs (productionize)      ████████████  done
   └ cleanup cron + multi-platform fan-out               ░░░░░░░░░░░░  not started
 Phase 3+ — quality, topics, feedback loop               ░░░░░░░░░░░░  not started
 ```
@@ -346,11 +346,11 @@ feedback            -- user regenerate instructions
 
 | Item | Status | Notes |
 |---|---|---|
-| Renders enumerated from filesystem, not Postgres | ⚠ debt | `web/src/lib/jobs.ts` scans `/data/renders/`; should query `jobs`/`outputs` tables once 2.3–2.5 land |
-| `edl-prototype.py` doesn't write to `topics` / `sources` / `jobs` / `outputs` tables | ⚠ debt | output is a folder of files; rows happen during productionization |
+| Renders enumerated from filesystem, not Postgres | ✅ closed | `web/src/lib/jobs.ts` queries `outputs` joined to `jobs` / `profiles` / `sources`; the `/data/renders` bind-mount is gone. nginx still serves the actual mp4 bytes off the host disk via the `/youtube-clips/media/` alias. |
+| `edl-prototype.py` doesn't write to `topics` / `sources` / `jobs` / `outputs` tables | ✅ closed | `pipeline/db.py` exposes the upsert/insert helpers; `discover-source.py` writes Topic + Source, `edl-prototype.py` writes Job (and stamps `topic_id` / `source_id` into `edl_jsonb` so the web join can find back to the Source), `edl-render.py` writes Output and flips Job → completed. `scripts/backfill-db.py` migrated the three pre-DB renders. |
 | Source discovery is manual (you give `video_id` + `--title` + `--channel` flags) | ✅ closed | `scripts/discover-source.py --topic "..."` picks a video; output JSON has the id + title + channel ready for the next step |
 | YouTube anti-bot from Azure datacenter IPs | 🚧 known limitation | Cookies get rejected within hours, not weeks — IP reputation, not cookie expiry. Manual re-export works for the next download or two then gets refused again. Real fixes: (a) residential proxy via `--proxy`, (b) download from a home machine and rsync to VM, (c) VPN to a residential network. **Decision: accept manual cookie refresh for now**, defer until autonomous cron is needed. Track decision date: 2026-05-09. |
-| Downloader is one yt-dlp call inside `hello-render.py` | ⚠ debt | 2.4 will move it into a reusable downloader module |
+| Downloader is one yt-dlp call inside `hello-render.py` | ✅ closed | `pipeline/downloader.py` wraps yt-dlp with cookies + EJS + format spec; idempotent; raises `BotWallError` / `CookiesMissingError` so callers can show actionable errors. |
 | Single platform variant per render | ⚠ debt | Phase 3 fan-out reads `Profile.output_variants[]` (see Profile model section) |
 
 **Deliberately NOT in Phase 2**: caption burn-in, multi-platform variants, smart vertical crop, thumbnails, agent-proposed topics, regeneration loop. All these come in later phases — first make the loop work end-to-end.
@@ -488,8 +488,8 @@ VM resize (if executed Phase 2+): +$60–150/mo on top.
     src/
       app/                           # pages: / + /jobs/[id]
       lib/
-        db.ts                        # Postgres helper
-        jobs.ts                      # filesystem-backed render enumeration
+        db.ts                        # Postgres helper (read path)
+        jobs.ts                      # outputs+jobs+profiles+sources join
   pipeline/                          # Python helpers shared by scripts
     prompts.py                       # load+render markdown prompt files
     profiles.py                      # fetch Profile from Postgres
@@ -497,6 +497,7 @@ VM resize (if executed Phase 2+): +$60–150/mo on top.
     youtube_search.py                # YouTube Data API v3 search + enrich
     downloader.py                    # yt-dlp wrapper (cookies + EJS); idempotent
     transcript.py                    # WebVTT parsing (dedup typing-anim quirk)
+    db.py                            # write helpers: upsert topics/sources, insert jobs/outputs
   prompts/                           # LLM prompts as data, not code
     edl-continuous.v3.md             # current EDL default (domain-neutral)
     edl-continuous.v2.md             # fallback (tech-shaped body)
@@ -511,9 +512,10 @@ VM resize (if executed Phase 2+): +$60–150/mo on top.
   scripts/                           # CLI entrypoints (no daemons)
     produce.py                       # ★ single-command full chain
     hello-render.py                  # standalone yt-dlp+ffmpeg+TTS smoke
-    discover-source.py               # topic → search → Claude pick → JSON
-    edl-prototype.py                 # transcript → Claude → EDL JSON
-    edl-render.py                    # EDL → mp4
+    discover-source.py               # topic → search → Claude pick → DB rows
+    edl-prototype.py                 # transcript → Claude → EDL → DB Job
+    edl-render.py                    # EDL → mp4 → DB Output
+    backfill-db.py                   # one-shot: scan filesystem, write missing rows
     run-agent.sh                     # cron entrypoint stub
   docker-compose.yml                 # web container + traffic-monitor_default
   .env                               # gitignored, mirrors ~/.config/...env

@@ -9,14 +9,6 @@ services:
       PG_PORT: "5432"
       PG_USER: youtube_clips
       PG_DB: youtube_clips
-      RENDERS_DIR: /data/renders
-    volumes:
-      # Renders live on the /video disk and need to be readable by the
-      # web container so the home + jobs pages can list and inspect them.
-      # nginx serves the actual mp4 bytes directly off the host filesystem
-      # (longer-prefix /youtube-clips/media/ alias) — this mount is purely
-      # for metadata reads (edl.json, mtime, size).
-      - /video/youtube-clips/outputs/edl-prototype:/data/renders:ro
     ports:
       - "127.0.0.1:3008:3000"
 

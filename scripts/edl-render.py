@@ -35,6 +35,10 @@ from pathlib import Path
 
 import requests
 
+# Pipeline helpers live one level up.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from pipeline import db
+
 RAW_BASE = Path("/video/youtube-clips/raw")
 OUT_BASE = Path("/video/youtube-clips/outputs/edl-prototype")
 
@@ -262,7 +266,39 @@ def main() -> int:
 
     overall = time.monotonic() - overall_t0
     final_dur = ffprobe_duration(out)
-    size_mb = out.stat().st_size / 1024 / 1024
+    size_bytes = out.stat().st_size
+    size_mb = size_bytes / 1024 / 1024
+
+    # Persist the Output row. job_id was stamped into edl.json by
+    # edl-prototype.py; if it's missing (legacy EDL pre-DB), skip the
+    # write and let the backfill script catch up.
+    job_id = edl.get("job_id")
+    output_id = None
+    if job_id:
+        platform = (
+            (edl.get("output", {}) if isinstance(edl.get("output"), dict) else {}).get("platform")
+            or "bilibili_long"
+        )
+        output_id = db.insert_output(
+            job_id=job_id,
+            platform=platform,
+            aspect_ratio="16:9",
+            language="zh",
+            path=str(out),
+            duration_sec=final_dur,
+            file_size_bytes=size_bytes,
+            title=edl.get("title_zh"),
+            description=edl.get("description_zh"),
+            tags=edl.get("tags_zh"),
+            status="ready",
+        )
+        # Mark Job complete now that we have a ready Output.
+        with db.cursor() as cur:
+            cur.execute(
+                "UPDATE jobs SET status = 'completed', completed_at = NOW() "
+                "WHERE id = %s",
+                (job_id,),
+            )
 
     print()
     print("=" * 60)
@@ -271,6 +307,8 @@ def main() -> int:
     print(f"  size:      {size_mb:.1f} MB")
     print(f"  shots:     {len(shots)}")
     print(f"  total:     {overall:.1f}s")
+    if output_id:
+        print(f"  db:        job_id={job_id} output_id={output_id}")
     print("=" * 60)
     return 0
 

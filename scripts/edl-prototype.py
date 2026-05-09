@@ -48,6 +48,7 @@ from pipeline.prompts import load_prompt
 from pipeline.profiles import fetch_profile
 from pipeline.claude_io import call_claude, extract_json
 from pipeline.transcript import parse_vtt, format_transcript
+from pipeline import db
 
 RAW_BASE = Path("/video/youtube-clips/raw")
 OUT_BASE = Path("/video/youtube-clips/outputs/edl-prototype")
@@ -192,11 +193,57 @@ def main() -> int:
     edl["profile_name"] = profile.name
     edl["prompt_template_version"] = prompt_tmpl.stamp
     edl["rendered_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
+
+    # Persist to Postgres. Source row is upserted (creates it if discover
+    # didn't run, else refreshes the title/channel from CLI args). Topic
+    # row is created on-the-fly using EDL.title_zh as the title — it's
+    # the closest thing we have when the user invoked produce.py with a
+    # bare --video-id and no preceding discover step.
+    source_id = db.upsert_source(
+        profile_id=profile.id,
+        source_platform="youtube",
+        external_id=args.video_id,
+        url=f"https://www.youtube.com/watch?v={args.video_id}",
+        title=args.title if args.title != "(unknown)" else None,
+        channel=args.channel if args.channel != "(unknown)" else None,
+        duration_sec=int(duration),
+        source_language="en",
+        download_path=str(mp4),
+        downloaded=True,
+    )
+    topic_title = edl.get("title_zh") or args.title or args.video_id
+    topic_id = db.upsert_topic(
+        profile_id=profile.id,
+        title=topic_title,
+        description=edl.get("description_zh"),
+        keywords=edl.get("tags_zh"),
+        status="approved",
+        source="agent",
+    )
+    # Stamp ids into the EDL *before* persisting so the stored
+    # jobs.edl_jsonb carries them too (the web read path joins via
+    # edl_jsonb->>'source_id'). job_id has to go in via a follow-up
+    # UPDATE because we don't know it until after the INSERT.
+    edl["topic_id"] = topic_id
+    edl["source_id"] = source_id
+    job_id = db.insert_job(
+        topic_id=topic_id,
+        profile_id=profile.id,
+        edl_jsonb=edl,
+        status="planning",
+    )
+    edl["job_id"] = job_id
+    with db.cursor() as cur:
+        cur.execute(
+            "UPDATE jobs SET edl_jsonb = edl_jsonb || jsonb_build_object('job_id', %s::bigint) WHERE id = %s",
+            (job_id, job_id),
+        )
     edl_path = job_dir / "edl.json"
     edl_path.write_text(
         json.dumps(edl, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     print(f"\nedl saved: {edl_path}")
+    print(f"db: topic_id={topic_id} source_id={source_id} job_id={job_id}")
 
     # Compact summary.
     print()

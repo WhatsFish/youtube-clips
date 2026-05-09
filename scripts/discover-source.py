@@ -37,6 +37,7 @@ from pipeline.prompts import load_prompt
 from pipeline.profiles import fetch_profile
 from pipeline.claude_io import call_claude, extract_json
 from pipeline.youtube_search import search, VideoCandidate
+from pipeline import db
 
 OUT_BASE = Path("/video/youtube-clips/outputs/discovered")
 
@@ -177,6 +178,42 @@ def main() -> int:
     pick["candidates_considered"] = len(short_list)
     pick["discovered_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
     out_path.write_text(json.dumps(pick, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    # Persist to Postgres so the rest of the pipeline (and the web UI)
+    # can find this discovery without scanning the filesystem.
+    if pick.get("picked_id"):
+        topic_id = db.upsert_topic(
+            profile_id=profile.id,
+            title=args.topic,
+            keywords=[query] if query != args.topic else None,
+            status="approved",
+            source="agent",
+        )
+        # Find the picked candidate's full metadata to feed into the source row.
+        picked_meta = next(
+            (c for c in short_list if c.id == pick["picked_id"]),
+            None,
+        )
+        source_id = db.upsert_source(
+            profile_id=profile.id,
+            source_platform="youtube",
+            external_id=pick["picked_id"],
+            url=f"https://www.youtube.com/watch?v={pick['picked_id']}",
+            title=pick["picked_title"],
+            channel=pick["picked_channel"],
+            duration_sec=picked_meta.duration_sec if picked_meta else None,
+            source_language="en",
+            metadata={
+                "view_count": picked_meta.view_count if picked_meta else None,
+                "published_at": picked_meta.published_at if picked_meta else None,
+                "has_captions": picked_meta.has_captions if picked_meta else None,
+                "discovered_for_topic_id": topic_id,
+            },
+        )
+        pick["topic_id"] = topic_id
+        pick["source_id"] = source_id
+        out_path.write_text(json.dumps(pick, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"db: topic_id={topic_id} source_id={source_id}")
 
     print()
     print("=" * 60)
