@@ -20,7 +20,7 @@ Phase 2 — MVP pipeline                                  ███████�
   │   • edl-render.py    — EDL → 16:9 mp4
   ├ web review UI (home grouped by Profile, /jobs/[id]) ████████████  done
   ├ prompts as files + Profile read from DB             ████████████  done
-  ├ source discovery agent (2.3)                        ░░░░░░░░░░░░  not started
+  ├ source discovery agent (2.3)                        ████████████  done
   ├ download / transcribe modules (2.4 / 2.5)           ░░░░░░░░░░░░  not started
   ├ DB-backed jobs/sources/outputs (productionize)      ░░░░░░░░░░░░  not started
   └ cleanup cron + multi-platform fan-out               ░░░░░░░░░░░░  not started
@@ -322,7 +322,7 @@ feedback            -- user regenerate instructions
 |---|---|---|---|
 | 2.1 | Migrations: full schema (`profiles` + `topics`/`sources`/`jobs`/`outputs`/`feedback`) | sql | ✅ |
 | 2.2 | Seed demo Profile `tech-insights-cn` | sql | ✅ (also `db/seeds/update-…sql` for evolving the row in place) |
-| 2.3 | Source discovery agent: YouTube Data API search + Claude filter on transcripts | TS/Python script | ☐ |
+| 2.3 | Source discovery agent: YouTube Data API search + metadata filter + Claude pick | Python | ✅ via `scripts/discover-source.py` (uses `pipeline/youtube_search.py` + `prompts/source-pick.v1.md`); transcript-based ranking deferred to v2 of the prompt if needed |
 | 2.4 | Downloader: yt-dlp → `/video/youtube-clips/raw/<id>/` | yt-dlp | ☐ — single-shot proven by `scripts/hello-render.py` (cookies + deno + EJS) |
 | 2.5 | Transcriber: prefer YouTube native captions; fallback Groq Whisper API | groq | ☐ — VTT path proven inside `scripts/edl-prototype.py` |
 | 2.6 | Translator: Claude (transcript → adapted Chinese commentary) | claude | ✅ via `scripts/edl-prototype.py` (file-based prompt + DB Profile) |
@@ -339,7 +339,8 @@ feedback            -- user regenerate instructions
 |---|---|---|
 | Renders enumerated from filesystem, not Postgres | ⚠ debt | `web/src/lib/jobs.ts` scans `/data/renders/`; should query `jobs`/`outputs` tables once 2.3–2.5 land |
 | `edl-prototype.py` doesn't write to `topics` / `sources` / `jobs` / `outputs` tables | ⚠ debt | output is a folder of files; rows happen during productionization |
-| Source discovery is manual (you give `video_id` + `--title` + `--channel` flags) | ⚠ debt | 2.3 closes this gap |
+| Source discovery is manual (you give `video_id` + `--title` + `--channel` flags) | ✅ closed | `scripts/discover-source.py --topic "..."` picks a video; output JSON has the id + title + channel ready for the next step |
+| Cookie freshness for yt-dlp — silent failure when cookies rotate | ⚠ debt | YouTube rotates account cookies every few weeks; needs a /status check on cookie age + a cookie-refresh playbook (re-export from browser) |
 | Downloader is one yt-dlp call inside `hello-render.py` | ⚠ debt | 2.4 will move it into a reusable downloader module |
 | Single platform variant per render | ⚠ debt | Phase 3 fan-out reads `Profile.output_variants[]` (see Profile model section) |
 
@@ -465,8 +466,11 @@ VM resize (if executed Phase 2+): +$60–150/mo on top.
   pipeline/                          # Python helpers shared by scripts
     prompts.py                       # load+render markdown prompt files
     profiles.py                      # fetch Profile from Postgres
+    claude_io.py                     # call_claude + extract_json (sanitizer)
+    youtube_search.py                # YouTube Data API v3 search + enrich
   prompts/                           # LLM prompts as data, not code
     edl-continuous.v2.md             # current EDL default
+    source-pick.v1.md                # source-discovery agent default
     README.md                        # prompt versioning convention
   db/
     schema.sql                       # idempotent CREATE + INSERT-skip seed
@@ -475,6 +479,7 @@ VM resize (if executed Phase 2+): +$60–150/mo on top.
       update-tech-insights-cn.sql    # one-shot UPDATE for evolving the seed
   scripts/                           # CLI entrypoints (no daemons)
     hello-render.py                  # standalone yt-dlp+ffmpeg+TTS smoke
+    discover-source.py               # topic → search → Claude pick → JSON
     edl-prototype.py                 # transcript → Claude → EDL JSON
     edl-render.py                    # EDL → mp4
     run-agent.sh                     # cron entrypoint stub
@@ -486,6 +491,7 @@ VM resize (if executed Phase 2+): +$60–150/mo on top.
   raw/<source_id>/                   # yt-dlp downloads, source.mp4 + source.en.vtt
   clips/<source_id>/                 # (Phase 3) extracted segments, TTL 30d
   outputs/
+    discovered/<profile>/<topic-slug>.json    # discover-source.py output
     edl-prototype/<source_id>/       # current prototype output dir
       edl.json                       # stamped: profile_name + prompt_template_version + rendered_at
       render.mp4                     # rendered Bilibili-long mp4

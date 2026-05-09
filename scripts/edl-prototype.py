@@ -46,10 +46,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from pipeline.prompts import load_prompt
 from pipeline.profiles import fetch_profile
+from pipeline.claude_io import call_claude, extract_json
 
 RAW_BASE = Path("/video/youtube-clips/raw")
 OUT_BASE = Path("/video/youtube-clips/outputs/edl-prototype")
-CLAUDE_BIN = "/home/liharr/.nvm/versions/node/v24.15.0/bin/claude"
 
 # ---- VTT parsing -----------------------------------------------------------
 
@@ -107,94 +107,6 @@ def format_transcript(entries: list[tuple[float, str]]) -> str:
         m, s = divmod(sec, 60)
         out.append(f"[{int(m):02d}:{s:05.2f}] {line}")
     return "\n".join(out)
-
-
-# ---- Claude IO -------------------------------------------------------------
-
-JSON_BLOCK_RE = re.compile(r"```json\s*(\{.*?\})\s*```", re.DOTALL)
-
-
-def _escape_embedded_quotes(s: str) -> str:
-    """Walk a JSON-ish blob and escape any ASCII double-quote that appears
-    inside a string value but isn't the actual string terminator. Claude
-    routinely embeds ASCII `"..."` for emphasis inside Chinese narration,
-    which lands in a JSON string and breaks json.loads.
-
-    A `"` is a legitimate string terminator iff the next non-whitespace
-    char is one of ,:}] (or end-of-input). Anything else means the `"` is
-    embedded literally and we must escape it as \\". Also escapes raw
-    \\n, \\r, \\t inside string values.
-    """
-    out: list[str] = []
-    i = 0
-    n = len(s)
-    in_str = False
-    while i < n:
-        c = s[i]
-        if not in_str:
-            out.append(c)
-            if c == '"':
-                in_str = True
-            i += 1
-            continue
-        if c == "\\" and i + 1 < n:
-            out.append(c)
-            out.append(s[i + 1])
-            i += 2
-            continue
-        if c == '"':
-            j = i + 1
-            while j < n and s[j] in " \t\r\n":
-                j += 1
-            if j >= n or s[j] in ",:}]":
-                out.append(c)
-                in_str = False
-                i += 1
-            else:
-                out.append('\\"')
-                i += 1
-            continue
-        if c == "\n":
-            out.append("\\n"); i += 1; continue
-        if c == "\r":
-            out.append("\\r"); i += 1; continue
-        if c == "\t":
-            out.append("\\t"); i += 1; continue
-        out.append(c)
-        i += 1
-    return "".join(out)
-
-
-def call_claude(prompt: str) -> str:
-    proc = subprocess.run(
-        [
-            CLAUDE_BIN,
-            "-p", prompt,
-            "--dangerously-skip-permissions",
-            "--max-turns", "1",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=300,
-    )
-    if proc.returncode != 0:
-        sys.stderr.write(f"claude exited {proc.returncode}\n")
-        sys.stderr.write(proc.stderr)
-        sys.exit(2)
-    return proc.stdout
-
-
-def extract_json(s: str) -> dict:
-    m = JSON_BLOCK_RE.search(s)
-    if not m:
-        m2 = re.search(r"(\{.*\})", s, re.DOTALL)
-        if not m2:
-            raise ValueError("no JSON found in claude output")
-        body = m2.group(1)
-    else:
-        body = m.group(1)
-    body = _escape_embedded_quotes(body)
-    return json.loads(body)
 
 
 # ---- Driver ---------------------------------------------------------------
