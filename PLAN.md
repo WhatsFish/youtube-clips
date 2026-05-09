@@ -29,6 +29,11 @@ Phase 3+ — quality, topics, feedback loop               ░░░░░░░�
 
 The Phase 2 sub-tasks below carry ✅ for the ones that have shipped and ☐ for the ones that haven't, so a cold reader can tell at a glance where the line is. Update this section whenever a sub-task crosses the line.
 
+### Known operational drag
+
+- **YouTube cookies need manual refresh per download burst.** YouTube's anti-bot is much more aggressive against Azure datacenter IPs than against residential ones. Even freshly-exported, valid cookies (containing `__Secure-3PSID` etc.) get rejected within hours — sometimes within minutes — when used from this VM. Symptom: yt-dlp returns `Sign in to confirm you're not a bot`. Workaround for now: re-export `~/.config/youtube-clips-cookies.txt` from a logged-in browser whenever yt-dlp errors out. Real fix (deferred): residential proxy or local-download-+-sync workflow. This is the blocker for putting downloads under cron.
+- **Run the chain manually for now.** `discover-source.py` → human runs yt-dlp (refresh cookies if needed) → `edl-prototype.py` → `edl-render.py`. Web UI shows the result immediately at `/youtube-clips/`.
+
 ---
 
 ---
@@ -340,7 +345,7 @@ feedback            -- user regenerate instructions
 | Renders enumerated from filesystem, not Postgres | ⚠ debt | `web/src/lib/jobs.ts` scans `/data/renders/`; should query `jobs`/`outputs` tables once 2.3–2.5 land |
 | `edl-prototype.py` doesn't write to `topics` / `sources` / `jobs` / `outputs` tables | ⚠ debt | output is a folder of files; rows happen during productionization |
 | Source discovery is manual (you give `video_id` + `--title` + `--channel` flags) | ✅ closed | `scripts/discover-source.py --topic "..."` picks a video; output JSON has the id + title + channel ready for the next step |
-| Cookie freshness for yt-dlp — silent failure when cookies rotate | ⚠ debt | YouTube rotates account cookies every few weeks; needs a /status check on cookie age + a cookie-refresh playbook (re-export from browser) |
+| YouTube anti-bot from Azure datacenter IPs | 🚧 known limitation | Cookies get rejected within hours, not weeks — IP reputation, not cookie expiry. Manual re-export works for the next download or two then gets refused again. Real fixes: (a) residential proxy via `--proxy`, (b) download from a home machine and rsync to VM, (c) VPN to a residential network. **Decision: accept manual cookie refresh for now**, defer until autonomous cron is needed. Track decision date: 2026-05-09. |
 | Downloader is one yt-dlp call inside `hello-render.py` | ⚠ debt | 2.4 will move it into a reusable downloader module |
 | Single platform variant per render | ⚠ debt | Phase 3 fan-out reads `Profile.output_variants[]` (see Profile model section) |
 
