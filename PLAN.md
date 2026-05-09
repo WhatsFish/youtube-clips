@@ -1,10 +1,35 @@
 # youtube-clips — Design Plan
 
-**Status:** Phase 0 in progress (as of 2026-05-09).
 **Owner:** liharr
-**Repo (planned):** `WhatsFish/youtube-clips`
+**Repo:** [`WhatsFish/youtube-clips`](https://github.com/WhatsFish/youtube-clips)
 
 > Single source of truth for this project's design. Update this file when decisions change. Earlier discussion lives in conversation history.
+
+---
+
+## Status snapshot (2026-05-09)
+
+```
+Phase 0 — Infrastructure                                ████████████  done
+Phase 1 — Project skeleton (the six-step convention)    ████████████  done
+Phase 2 — MVP pipeline                                  ████████░░░░  ~60%
+  ├ DB schema + demo Profile seed                       ████████████  done
+  ├ vertical-slice prototype (LLM core proven E2E)      ████████████  done
+  │   • hello-render.py — yt-dlp + ffmpeg + TTS chain
+  │   • edl-prototype.py — Claude → EDL JSON
+  │   • edl-render.py    — EDL → 16:9 mp4
+  ├ web review UI (home grouped by Profile, /jobs/[id]) ████████████  done
+  ├ prompts as files + Profile read from DB             ████████████  done
+  ├ source discovery agent (2.3)                        ░░░░░░░░░░░░  not started
+  ├ download / transcribe modules (2.4 / 2.5)           ░░░░░░░░░░░░  not started
+  ├ DB-backed jobs/sources/outputs (productionize)      ░░░░░░░░░░░░  not started
+  └ cleanup cron + multi-platform fan-out               ░░░░░░░░░░░░  not started
+Phase 3+ — quality, topics, feedback loop               ░░░░░░░░░░░░  not started
+```
+
+The Phase 2 sub-tasks below carry ✅ for the ones that have shipped and ☐ for the ones that haven't, so a cold reader can tell at a glance where the line is. Update this section whenever a sub-task crosses the line.
+
+---
 
 ---
 
@@ -267,48 +292,76 @@ feedback            -- user regenerate instructions
 
 ### Phase 0 — Infrastructure (current)
 
-| # | Owner | Action |
-|---|---|---|
-| 0.1 | liharr | Azure portal: create 500 GB **Standard SSD**, Japan East, same zone as `ai-native` VM, LRS. Attach to VM (Read/Write host caching) |
-| 0.2 | claude | Identify new disk (`lsblk`), `parted` GPT, `mkfs.ext4`, get UUID, add to `/etc/fstab` with `defaults,nofail`, `mount /video`, `chown liharr:liharr /video` |
-| 0.3 | claude | Verify `df -h /video` ~492 GB available; 1 GB read/write smoke test |
-| 0.4 | claude | Update root `CLAUDE.md` "Disk layout" section: add `/video/` for video projects |
-| 0.5 | claude | Add `/video` disk-water-level check to /status (>80% red) |
+| # | Owner | Action | Status |
+|---|---|---|---|
+| 0.1 | liharr | Azure portal: create 500 GB **Standard SSD**, Japan East, same zone as `ai-native` VM, LRS. Attach to VM (Read/Write host caching) | ✅ |
+| 0.2 | claude | Identify new disk (`lsblk`), `parted` GPT, `mkfs.ext4`, get UUID, add to `/etc/fstab` with `defaults,nofail`, `mount /video`, `chown liharr:liharr /video` | ✅ |
+| 0.3 | claude | Verify `df -h /video` ~492 GB available; 1 GB read/write smoke test | ✅ |
+| 0.4 | claude | Update root `CLAUDE.md` "Disk layout" section: add `/video/` for video projects | ✅ |
+| 0.5 | claude | Add `/video` disk-water-level check to /status (>80% red) | ✅ |
 
 ### Phase 1 — Project skeleton (six-step convention from root CLAUDE.md)
 
-| # | Action |
-|---|---|
-| 1.1 | `git init` `/home/liharr/src/youtube-clips/`; `gh repo create WhatsFish/youtube-clips --public --source=. --remote=origin --push` |
-| 1.2 | Postgres: bootstrap `youtube_clips` role + DB via umami superuser (mirror `stock-analyst/db/bootstrap.sh`) |
-| 1.3 | nginx snippet `/etc/nginx/snippets/youtube-clips.conf`, basePath `/youtube-clips`, proxy `127.0.0.1:3008` |
-| 1.4 | Next.js 14 App Router + Tailwind + pg, container on `traffic-monitor_default`, `output: standalone` |
-| 1.5 | site-index navigation entry |
-| 1.6 | /status group: HTTP probe + DB freshness + cron heartbeats; register `/video` disk check |
-| 1.7 | `~/.config/youtube-clips.env`: `YT_API_KEY`, `AZURE_SPEECH_KEY`, `GROQ_API_KEY`, DB creds (Claude is invoked via the `claude` CLI which uses its own auth — no `ANTHROPIC_API_KEY` needed) |
-| 1.8 | Umami site (manual via Umami UI to get website-id) |
-| 1.9 | `run-agent.sh` template; cost-tracker hook |
+| # | Action | Status |
+|---|---|---|
+| 1.1 | `git init` `/home/liharr/src/youtube-clips/`; `gh repo create WhatsFish/youtube-clips --public --source=. --remote=origin --push` | ✅ |
+| 1.2 | Postgres: bootstrap `youtube_clips` role + DB via umami superuser (mirror `stock-analyst/db/bootstrap.sh`) | ✅ |
+| 1.3 | nginx snippet `/etc/nginx/snippets/youtube-clips.conf`, basePath `/youtube-clips`, proxy `127.0.0.1:3008` | ✅ |
+| 1.4 | Next.js 14 App Router + Tailwind + pg, container on `traffic-monitor_default`, `output: standalone` | ✅ |
+| 1.5 | site-index navigation entry | ✅ |
+| 1.6 | /status group: HTTP probe + DB freshness + cron heartbeats; register `/video` disk check | ✅ |
+| 1.7 | `~/.config/youtube-clips.env`: `YT_API_KEY`, `AZURE_SPEECH_KEY`, `GROQ_API_KEY`, DB creds (Claude is invoked via the `claude` CLI which uses its own auth — no `ANTHROPIC_API_KEY` needed) | ✅ |
+| 1.8 | Umami site (manual via Umami UI to get website-id) | ✅ |
+| 1.9 | `run-agent.sh` template; cost-tracker hook | ✅ (stub; real agent in Phase 2.x) |
 
 ### Phase 2 — MVP pipeline (single platform variant, demo Profile only)
 
 **Goal:** approved topic → 1 mp4 (16:9 Bilibili long, Chinese narration over English clips). Prove the loop. **Skip everything not on this critical path.**
 
-| # | Module | Tool |
+| # | Module | Tool | Status |
+|---|---|---|---|
+| 2.1 | Migrations: full schema (`profiles` + `topics`/`sources`/`jobs`/`outputs`/`feedback`) | sql | ✅ |
+| 2.2 | Seed demo Profile `tech-insights-cn` | sql | ✅ (also `db/seeds/update-…sql` for evolving the row in place) |
+| 2.3 | Source discovery agent: YouTube Data API search + Claude filter on transcripts | TS/Python script | ☐ |
+| 2.4 | Downloader: yt-dlp → `/video/youtube-clips/raw/<id>/` | yt-dlp | ☐ — single-shot proven by `scripts/hello-render.py` (cookies + deno + EJS) |
+| 2.5 | Transcriber: prefer YouTube native captions; fallback Groq Whisper API | groq | ☐ — VTT path proven inside `scripts/edl-prototype.py` |
+| 2.6 | Translator: Claude (transcript → adapted Chinese commentary) | claude | ✅ via `scripts/edl-prototype.py` (file-based prompt + DB Profile) |
+| 2.7 | Edit decision agent: Claude → EDL JSON | claude | ✅ same script as 2.6 (single-pass) |
+| 2.8 | TTS: Azure Speech (Chinese voice from Profile) → mp3 | azure-speech | ✅ via `scripts/edl-render.py` |
+| 2.9 | Renderer: ffmpeg cut + duck original audio + overlay Chinese narration → 16:9 mp4 | ffmpeg | ✅ same script as 2.8 |
+| 2.10 | Web UI: `/youtube-clips/` (Profile-grouped list) + `/youtube-clips/jobs/[id]` preview + download | next | ✅ |
+| 2.11 | Cron: scan approved topics, run pipeline | cron | ☐ |
+| 2.12 | Cleanup cron: TTL delete `raw/` >7d, `clips/` >30d; heartbeat | cron | ☐ |
+
+**Phase 2 productionization debt** (the prototype works end-to-end, but several pieces still need to be unified into the official pipeline):
+
+| Item | Status | Notes |
 |---|---|---|
-| 2.1 | Migrations: schema above (all tables) | sql |
-| 2.2 | Seed demo Profile `tech-insights-cn` | sql |
-| 2.3 | Source discovery agent: YouTube Data API search + Claude filter on transcripts | TS/Python script |
-| 2.4 | Downloader: yt-dlp → `/video/youtube-clips/raw/<id>/` | yt-dlp |
-| 2.5 | Transcriber: prefer YouTube native captions; fallback Groq Whisper API | groq |
-| 2.6 | Translator: Claude (transcript → adapted Chinese commentary) | claude |
-| 2.7 | Edit decision agent: Claude → EDL JSON | claude |
-| 2.8 | TTS: Azure Speech (Chinese voice from Profile) → mp3 | azure-speech |
-| 2.9 | Renderer: ffmpeg cut + duck original audio + overlay Chinese narration → 16:9 mp4 | ffmpeg |
-| 2.10 | Web UI: `/youtube-clips/jobs/[id]` preview + download | next |
-| 2.11 | Cron: scan approved topics, run pipeline | cron |
-| 2.12 | Cleanup cron: TTL delete `raw/` >7d, `clips/` >30d; heartbeat | cron |
+| Renders enumerated from filesystem, not Postgres | ⚠ debt | `web/src/lib/jobs.ts` scans `/data/renders/`; should query `jobs`/`outputs` tables once 2.3–2.5 land |
+| `edl-prototype.py` doesn't write to `topics` / `sources` / `jobs` / `outputs` tables | ⚠ debt | output is a folder of files; rows happen during productionization |
+| Source discovery is manual (you give `video_id` + `--title` + `--channel` flags) | ⚠ debt | 2.3 closes this gap |
+| Downloader is one yt-dlp call inside `hello-render.py` | ⚠ debt | 2.4 will move it into a reusable downloader module |
+| Single platform variant per render | ⚠ debt | Phase 3 fan-out reads `Profile.output_variants[]` (see Profile model section) |
 
 **Deliberately NOT in Phase 2**: caption burn-in, multi-platform variants, smart vertical crop, thumbnails, agent-proposed topics, regeneration loop. All these come in later phases — first make the loop work end-to-end.
+
+### Prompt management
+
+LLM prompts live as plain markdown files under `prompts/<task>.v<n>.md` with YAML frontmatter (name, version, purpose, last_updated, notes, required_placeholders). Body uses `str.format()` placeholders that the runtime fills in. Loader is `pipeline.prompts.load_prompt(name, version="latest")`.
+
+```
+prompts/
+  edl-continuous.v2.md     ← current default for the EDL agent
+  README.md                ← prompt convention + version policy
+```
+
+Three rules that pay off as the prompt count grows:
+
+1. **Frozen versions**. Don't edit a versioned prompt in place; copy to the next version. Old versions stay so you can A/B and so prior EDL outputs that reference them remain reproducible.
+2. **Stamp identity into outputs**. `edl-prototype.py` writes `prompt_template_version: "edl-continuous.v2"` and `profile_name: "tech-insights-cn"` and `rendered_at` into every `edl.json`. Every render is traceable to a (Profile row, prompt file) pair.
+3. **Profile drives values, prompt drives structure**. The prompt template is the *task* (filter + EDL + Chinese narration). The Profile is the *channel-specific tunables* (voice, tone, verbal_tics, edit_style_prompt). At runtime, `Profile.render_block()` is injected into the prompt template's `{profile_block}` slot. New channel = new Profile row; no prompt edit. Prompt iteration = bump the version; no DB change.
+
+`pipeline/profiles.py` reads from Postgres (no more code-side hardcoded copy). `pipeline/prompts.py` loads the markdown files. Both modules are thin.
 
 ### Phase 3 — Quality enhancements
 
@@ -398,28 +451,55 @@ VM resize (if executed Phase 2+): +$60–150/mo on top.
 
 ---
 
-## Directory layout (post Phase 1)
+## Directory layout
 
 ```
 /home/liharr/src/youtube-clips/      # code (root disk)
   PLAN.md                            # this file
-  web/                               # Next.js
-  agents/                            # topic, source, edit, render
-  db/                                # migrations, bootstrap
-  scripts/                           # cron entrypoints, run-agent.sh
-  docker-compose.yml
-  .env                               # gitignored, links to ~/.config
+  web/                               # Next.js (basePath /youtube-clips, port 3008)
+    src/
+      app/                           # pages: / + /jobs/[id]
+      lib/
+        db.ts                        # Postgres helper
+        jobs.ts                      # filesystem-backed render enumeration
+  pipeline/                          # Python helpers shared by scripts
+    prompts.py                       # load+render markdown prompt files
+    profiles.py                      # fetch Profile from Postgres
+  prompts/                           # LLM prompts as data, not code
+    edl-continuous.v2.md             # current EDL default
+    README.md                        # prompt versioning convention
+  db/
+    schema.sql                       # idempotent CREATE + INSERT-skip seed
+    bootstrap.sh                     # apply schema as the youtube_clips role
+    seeds/
+      update-tech-insights-cn.sql    # one-shot UPDATE for evolving the seed
+  scripts/                           # CLI entrypoints (no daemons)
+    hello-render.py                  # standalone yt-dlp+ffmpeg+TTS smoke
+    edl-prototype.py                 # transcript → Claude → EDL JSON
+    edl-render.py                    # EDL → mp4
+    run-agent.sh                     # cron entrypoint stub
+  docker-compose.yml                 # web container + traffic-monitor_default
+  .env                               # gitignored, mirrors ~/.config/...env
+  .venv/                             # Python venv (gitignored)
 
-/video/youtube-clips/                # data (new 500 GB disk)
-  raw/<source_id>/                   # yt-dlp downloads, TTL 7d
-  clips/<source_id>/                 # extracted segments, TTL 30d
-  outputs/<job_id>/                  # rendered variants, long-lived
-    bilibili_long.mp4
-    bilibili_vertical.mp4
-    douyin.mp4
-  thumbnails/<job_id>/
+/video/youtube-clips/                # data (500 GB Standard SSD)
+  raw/<source_id>/                   # yt-dlp downloads, source.mp4 + source.en.vtt
+  clips/<source_id>/                 # (Phase 3) extracted segments, TTL 30d
+  outputs/
+    edl-prototype/<source_id>/       # current prototype output dir
+      edl.json                       # stamped: profile_name + prompt_template_version + rendered_at
+      render.mp4                     # rendered Bilibili-long mp4
+      prompt.txt                     # exact prompt sent to Claude (debugging)
+      raw-claude.txt                 # raw stdout from Claude (debugging)
+      _work/                         # per-shot intermediates (kept for debugging)
+    <job_id>/                        # (Phase 2 productionized) one folder per Job row
+      bilibili_long.mp4
+      bilibili_vertical.mp4          # (Phase 3 fan-out)
+      douyin.mp4                     # (Phase 3)
+  thumbnails/<job_id>/               # (Phase 4)
   bgm/                               # shared music library
   voices/                            # TTS voice samples
 
-~/.config/youtube-clips.env          # secrets
+~/.config/youtube-clips.env          # mode 600: DB password + API keys + Umami
+~/.config/youtube-clips-cookies.txt  # mode 600: YouTube cookies for yt-dlp
 ```
