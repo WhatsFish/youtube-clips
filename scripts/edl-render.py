@@ -39,6 +39,7 @@ import requests
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from pipeline import db
 from pipeline.vad import speech_intervals
+from pipeline.bgm import pick_track
 
 RAW_BASE = Path("/video/youtube-clips/raw")
 OUT_BASE = Path("/video/youtube-clips/outputs/edl-prototype")
@@ -70,6 +71,18 @@ AUDIO_ARGS = [
 SOURCE_VOL_SPEECH = 0.03
 SOURCE_VOL_AMBIENT = 0.10
 NARR_VOL = 1.6
+
+# BGM levels. Three modes the EDL agent chooses from:
+#   - off:      no BGM at all (severe / dense topics where music distracts)
+#   - constant: fixed level under everything (vibe-forward content)
+#   - dynamic:  ducks down during source speech, rises during silence —
+#               mirrors the source-VAD envelope inverted, so BGM fills
+#               the dead air left by source cutaways without competing
+#               with source-on-camera speech.
+# Levels picked low; narration at 1.6× still dominates by ~10×.
+BGM_VOL_CONSTANT = 0.06
+BGM_VOL_SPEECH = 0.04   # while source is speaking, BGM ducks lower
+BGM_VOL_AMBIENT = 0.10  # while source is silent, BGM fills the gap
 
 # Defaults; can be overridden by EDL `voice` / `rate_pct` fields.
 DEFAULT_VOICE = "zh-CN-YunxiNeural"
@@ -259,6 +272,102 @@ def concat(parts: list[Path], out: Path, work_dir: Path) -> None:
         ],
         check=True,
     )
+
+
+# ---- BGM mix --------------------------------------------------------------
+
+
+def project_speech_to_concat(
+    shots: list[dict],
+    source_speech: list[list[tuple[float, float]]],
+    shot_durations: list[float],
+) -> list[tuple[float, float]]:
+    """Map per-source speech intervals onto the concat timeline.
+
+    For each shot, look up its (source_idx, source_start_sec, dur). Find
+    the speech intervals from that source overlapping the shot's source
+    window, clip them to the window, shift by the shot's offset on the
+    concat timeline. Then merge any neighbouring spans (a tiny gap from
+    rounding shouldn't fragment the BGM envelope).
+    """
+    intervals: list[tuple[float, float]] = []
+    concat_t = 0.0
+    for sh, dur in zip(shots, shot_durations):
+        idx = int(sh.get("source_idx", 0))
+        s_start = float(sh["source_start_sec"])
+        s_end = s_start + dur
+        if 0 <= idx < len(source_speech):
+            for vs, ve in source_speech[idx]:
+                if ve <= s_start or vs >= s_end:
+                    continue
+                local_s = max(0.0, vs - s_start)
+                local_e = min(dur, ve - s_start)
+                intervals.append((concat_t + local_s, concat_t + local_e))
+        concat_t += dur
+    intervals.sort()
+    merged: list[tuple[float, float]] = []
+    for s, e in intervals:
+        if merged and s <= merged[-1][1] + 0.05:
+            merged[-1] = (merged[-1][0], max(e, merged[-1][1]))
+        else:
+            merged.append((s, e))
+    return merged
+
+
+def _bgm_volume_expr(
+    mode: str,
+    speech_concat: list[tuple[float, float]],
+) -> str:
+    """ffmpeg `volume` expression for the BGM mix, in concat-timeline `t`."""
+    if mode == "constant":
+        return f"{BGM_VOL_CONSTANT:.3f}"
+    # mode == "dynamic": ducked during source speech, raised during ambient.
+    # Same `between(t,a,b)` summation trick as the source ducker — non-zero
+    # sum (ffmpeg eval treats as true) means we're inside speech.
+    if not speech_concat:
+        # No speech detected anywhere → behave like constant at the
+        # ambient level (BGM fills everything).
+        return f"{BGM_VOL_AMBIENT:.3f}"
+    parts = "+".join(f"between(t,{s:.3f},{e:.3f})" for s, e in speech_concat)
+    return f"if({parts},{BGM_VOL_SPEECH:.3f},{BGM_VOL_AMBIENT:.3f})"
+
+
+def mix_bgm(
+    in_path: Path,
+    bgm_path: Path,
+    out_path: Path,
+    *,
+    mode: str,
+    speech_concat: list[tuple[float, float]],
+) -> None:
+    """Mix `bgm_path` into `in_path`'s audio under `mode` rules, write to
+    `out_path`. Loops BGM with `-stream_loop -1` so a short BGM track
+    survives a long concat. `amix duration=first` truncates to the
+    concat's length (ignoring any trailing BGM tail).
+
+    Video is copied; only audio re-encodes. The subsequent subtitle-burn
+    step then re-encodes video once. Net: each codec gets re-encoded
+    exactly once across the full pipeline.
+    """
+    expr = _bgm_volume_expr(mode, speech_concat)
+    bgm_filter = (
+        f"[1:a]volume=volume='{expr}':eval=frame[bgm]"
+        if "if(" in expr
+        else f"[1:a]volume={expr}[bgm]"
+    )
+    cmd = [
+        "ffmpeg", "-y", "-loglevel", "error",
+        "-i", str(in_path),
+        "-stream_loop", "-1", "-i", str(bgm_path),
+        "-filter_complex",
+        f"{bgm_filter};"
+        f"[0:a][bgm]amix=inputs=2:duration=first:dropout_transition=0[a]",
+        "-map", "0:v", "-map", "[a]",
+        "-c:v", "copy",
+        "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2",
+        str(out_path),
+    ]
+    subprocess.run(cmd, check=True)
 
 
 # ---- Subtitle burn-in ------------------------------------------------------
@@ -497,14 +606,52 @@ def main() -> int:
     concat(parts, concat_mp4, work_dir)
     done(label)
 
-    # Burn Chinese subtitles into the final mp4. The pre-sub concat is
-    # kept under _work/ so a future debug pass can A/B compare; the
-    # operator-facing artifact is render.mp4 (with subs).
+    # BGM mix (if EDL says so and a track exists for the requested mood).
+    # Done at the concat level rather than per-shot — one ffmpeg pass
+    # over the entire timeline is simpler than juggling BGM offsets per
+    # shot, and the dynamic-volume expression naturally tracks
+    # concat-time speech windows projected from per-source VAD.
+    bgm_cfg = edl.get("bgm") or {}
+    bgm_mode = (bgm_cfg.get("mode") or "off").lower()
+    bgm_mood = (bgm_cfg.get("mood") or "neutral").lower()
+    bgm_input = concat_mp4
+    if bgm_mode in ("constant", "dynamic"):
+        track = pick_track(bgm_mood)
+        if track is None:
+            print(
+                f"[bgm]  mode={bgm_mode} mood={bgm_mood} → "
+                f"no tracks under bgm/{bgm_mood}/, skipping"
+            )
+        else:
+            label = stage(f"bgm ({bgm_mode}, {bgm_mood}: {track.name})")
+            speech_concat = (
+                project_speech_to_concat(shots, source_speech, shot_durations)
+                if bgm_mode == "dynamic"
+                else []
+            )
+            bgm_mixed = work_dir / "concat-with-bgm.mp4"
+            mix_bgm(
+                concat_mp4,
+                track,
+                bgm_mixed,
+                mode=bgm_mode,
+                speech_concat=speech_concat,
+            )
+            bgm_input = bgm_mixed
+            done(label)
+    else:
+        if bgm_mode != "off":
+            print(f"[bgm]  unknown mode={bgm_mode!r}, treating as off")
+
+    # Burn Chinese subtitles into the final mp4. The pre-sub artifact
+    # (concat.mp4 or concat-with-bgm.mp4) is kept under _work/ so a
+    # future debug pass can A/B compare; the operator-facing artifact
+    # is render.mp4 (with subs).
     label = stage("subtitles")
     ass_path = work_dir / "subs.ass"
     write_ass_subs(shot_durations, shots, ass_path)
     out = job_dir / "render.mp4"
-    burn_subs(concat_mp4, ass_path, out)
+    burn_subs(bgm_input, ass_path, out)
     done(label)
 
     overall = time.monotonic() - overall_t0
