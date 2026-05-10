@@ -80,7 +80,7 @@ NARR_VOL = 1.6
 #               the dead air left by source cutaways without competing
 #               with source-on-camera speech.
 # Levels picked low; narration at 1.6× still dominates by ~10×.
-BGM_VOL_CONSTANT = 0.06
+BGM_VOL_CONSTANT = 0.08
 BGM_VOL_SPEECH = 0.04   # while source is speaking, BGM ducks lower
 BGM_VOL_AMBIENT = 0.10  # while source is silent, BGM fills the gap
 
