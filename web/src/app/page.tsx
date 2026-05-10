@@ -178,6 +178,11 @@ function JobCard({ job }: { job: Job }) {
           {(job.edl?.sources?.length ?? 1) > 1 ? (
             <span>{job.edl!.sources!.length} sources</span>
           ) : null}
+          {job.renderCount > 1 ? (
+            <span title="number of times this source has been re-rendered">
+              v{job.renderCount}
+            </span>
+          ) : null}
           <span>{fmtMb(job.renderSizeBytes)}</span>
           <span>{fmtTime(job.renderMtime)}</span>
           <span className="font-mono">{job.id}</span>

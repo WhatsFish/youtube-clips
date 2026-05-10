@@ -23,7 +23,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-DEFAULT_INTERVAL_SEC = 30
+DEFAULT_INTERVAL_SEC = 15
 DEFAULT_HEIGHT = 480
 
 

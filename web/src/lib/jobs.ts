@@ -56,6 +56,7 @@ export type Job = {
   platform: string;
   aspectRatio: string;
   language: string;
+  renderCount: number;            // total Outputs ever produced for this (source, profile)
 };
 
 type Row = {
@@ -74,35 +75,54 @@ type Row = {
   ready_at: Date | null;
   edl_jsonb: Edl | null;
   shot_count: number;
+  render_count: string;  // Postgres COUNT(*) returns a bigint; pg lib gives us a string
 };
 
+// One render = one Output row. But re-running edl-render.py overwrites
+// render.mp4 in place under the primary source's directory, so multiple
+// Output rows for the same source all link to the same physical file.
+// The home page should therefore show one card per (source, profile),
+// pointing at the most recent Output. We surface a `render_count` so
+// older versions stay visible as a small "v3" badge — they're still in
+// the DB for debug, just not separate cards.
+//
 // jobs.edl_jsonb carries a source_id stamp written by edl-prototype.py
 // (and by the backfill script for legacy renders). That's the cleanest
 // join key from a Job back to its Source — Phase 3 will likely add a
-// direct sources_id column on jobs and this join goes away.
+// direct sources.id column on jobs and this join goes away.
 const SELECT_RENDERS = `
-  SELECT
-    o.id              AS output_id,
-    o.job_id          AS job_id,
-    s.external_id     AS external_id,
-    p.name            AS profile_name,
-    o.title           AS title,
-    o.description     AS description,
-    o.tags            AS tags,
-    o.platform        AS platform,
-    o.aspect_ratio    AS aspect_ratio,
-    o.language        AS language,
-    o.duration_sec    AS duration_sec,
-    o.file_size_bytes AS file_size_bytes,
-    o.ready_at        AS ready_at,
-    j.edl_jsonb       AS edl_jsonb,
-    COALESCE(jsonb_array_length(j.edl_jsonb -> 'shots'), 0) AS shot_count
-  FROM outputs o
-  JOIN jobs     j ON j.id = o.job_id
-  JOIN profiles p ON p.id = j.profile_id
-  LEFT JOIN sources s
-       ON s.id = NULLIF(j.edl_jsonb ->> 'source_id', '')::bigint
-  WHERE o.status = 'ready'
+  WITH ranked AS (
+    SELECT
+      o.id              AS output_id,
+      o.job_id          AS job_id,
+      s.external_id     AS external_id,
+      p.name            AS profile_name,
+      o.title           AS title,
+      o.description     AS description,
+      o.tags            AS tags,
+      o.platform        AS platform,
+      o.aspect_ratio    AS aspect_ratio,
+      o.language        AS language,
+      o.duration_sec    AS duration_sec,
+      o.file_size_bytes AS file_size_bytes,
+      o.ready_at        AS ready_at,
+      j.edl_jsonb       AS edl_jsonb,
+      COALESCE(jsonb_array_length(j.edl_jsonb -> 'shots'), 0) AS shot_count,
+      ROW_NUMBER() OVER (
+        PARTITION BY COALESCE(s.external_id, 'orphan-' || o.id::text), p.name
+        ORDER BY o.ready_at DESC NULLS LAST, o.id DESC
+      ) AS rn,
+      COUNT(*) OVER (
+        PARTITION BY COALESCE(s.external_id, 'orphan-' || o.id::text), p.name
+      ) AS render_count
+    FROM outputs o
+    JOIN jobs     j ON j.id = o.job_id
+    JOIN profiles p ON p.id = j.profile_id
+    LEFT JOIN sources s
+         ON s.id = NULLIF(j.edl_jsonb ->> 'source_id', '')::bigint
+    WHERE o.status = 'ready'
+  )
+  SELECT * FROM ranked WHERE rn = 1
 `;
 
 function rowToJob(r: Row): Job {
@@ -122,16 +142,19 @@ function rowToJob(r: Row): Job {
     platform: r.platform,
     aspectRatio: r.aspect_ratio,
     language: r.language,
+    renderCount: parseInt(r.render_count ?? "1", 10) || 1,
   };
 }
 
 export async function listJobs(): Promise<Job[]> {
-  // The LEFT JOIN above falls back to NULL external_id if no Source row
-  // matches; for those, we recover the id from the EDL's source_id field
-  // (set by edl-prototype/backfill). Belt-and-suspenders pattern until
-  // sources↔jobs gets a direct foreign key in a future migration.
+  // SELECT_RENDERS already collapses to one row per (source, profile) via
+  // ROW_NUMBER + WHERE rn = 1; we just sort the survivors by recency for
+  // the home page. The LEFT JOIN falls back to NULL external_id if no
+  // Source row matches; for those, we recover the id from the EDL's
+  // source_id field (set by edl-prototype/backfill). Belt-and-suspenders
+  // until sources↔jobs gets a direct foreign key in a future migration.
   const rows = await query<Row>(
-    `${SELECT_RENDERS} ORDER BY o.ready_at DESC NULLS LAST`,
+    `${SELECT_RENDERS} ORDER BY ready_at DESC NULLS LAST`,
   );
   return rows.map(rowToJob).map((j) => {
     if (j.id) return j;
@@ -141,12 +164,15 @@ export async function listJobs(): Promise<Job[]> {
 }
 
 export async function loadJob(id: string): Promise<Job | null> {
-  // `id` is the YouTube video_id (Source.external_id). Look up the most
-  // recent `ready` Output for any Job whose EDL stamped that source_id.
+  // `id` is the YouTube video_id (Source.external_id). The CTE in
+  // SELECT_RENDERS already picked the latest Output per (source, profile),
+  // so we just filter to that external_id and take the freshest row
+  // across all profiles in case the same source was rendered under more
+  // than one Profile.
   const rows = await query<Row>(
     `${SELECT_RENDERS}
-       AND s.external_id = $1
-     ORDER BY o.ready_at DESC NULLS LAST
+     AND external_id = $1
+     ORDER BY ready_at DESC NULLS LAST
      LIMIT 1`,
     [id],
   );
