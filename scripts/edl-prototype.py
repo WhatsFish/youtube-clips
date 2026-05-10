@@ -308,11 +308,80 @@ def main() -> int:
     job_dir = OUT_BASE / primary.video_id
     job_dir.mkdir(parents=True, exist_ok=True)
 
-    prompt = prompt_tmpl.render(**build_prompt_kwargs(profile, sources))
-    (job_dir / "prompt.txt").write_text(prompt, encoding="utf-8")
-    print(f"prompt: {len(prompt)} chars → {job_dir / 'prompt.txt'}")
+    base_kwargs = build_prompt_kwargs(profile, sources)
 
-    print("calling claude...", flush=True)
+    # ---- Stage 1 (analyze) — only when the active edl-continuous prompt is v5+
+    # The single-pass v3/v4 templates have no analysis_block placeholder, so
+    # we skip the extra Claude call when the operator explicitly downgrades
+    # via --prompt-version 4. Two-stage adds ~60s of wall-clock + one extra
+    # Claude billing call but yields markedly deeper writeups on dense
+    # tech / finance topics; for vlog content the lift is smaller but the
+    # output stays coherent because Stage 2 still owns the channel voice.
+    analysis: dict | None = None
+    if prompt_tmpl.version >= 5:
+        analyze_tmpl = load_prompt("edl-analyze", version="latest")
+        print(f"prompt:  {analyze_tmpl.stamp} (Stage 1: analyze)")
+        analyze_prompt = analyze_tmpl.render(**base_kwargs)
+        (job_dir / "analyze.prompt.txt").write_text(analyze_prompt, encoding="utf-8")
+        print(f"prompt: {len(analyze_prompt)} chars → analyze.prompt.txt")
+
+        print("calling claude (Stage 1: analyze)...", flush=True)
+        t0 = time.monotonic()
+        raw1 = call_claude(analyze_prompt)
+        elapsed1 = time.monotonic() - t0
+        (job_dir / "analyze.raw-claude.txt").write_text(raw1, encoding="utf-8")
+        print(f"Stage 1 returned in {elapsed1:.1f}s, {len(raw1)} chars")
+
+        analysis = extract_json(raw1)
+        (job_dir / "analysis.json").write_text(
+            json.dumps(analysis, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+
+        # Stage 1 may decide the material isn't worth a video at all. If so,
+        # short-circuit before paying for Stage 2 — propagate the skip into
+        # an EDL with decision="skip" so produce.py fails clean (the
+        # renderer already exits cleanly on non-make EDLs).
+        if analysis.get("decision") == "skip":
+            edl_skip = {
+                "decision": "skip",
+                "decision_reason": analysis.get("decision_reason_zh", ""),
+                "stage1_analysis": analysis,
+                "profile_name": profile.name,
+                "prompt_template_version": f"{analyze_tmpl.stamp}+skip",
+                "rendered_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+                "sources": [
+                    {"video_id": s.video_id, "title": s.title,
+                     "channel": s.channel, "role": s.role}
+                    for s in sources
+                ],
+            }
+            (job_dir / "edl.json").write_text(
+                json.dumps(edl_skip, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+            print()
+            print("=" * 60)
+            print(f"  decision: skip  (Stage 1)")
+            print(f"  reason:   {edl_skip['decision_reason']}")
+            print("=" * 60)
+            return 0
+
+        n_insights = len(analysis.get("insights") or [])
+        print(f"Stage 1 picked {n_insights} insights, narrative_arc set")
+        base_kwargs["analysis_block"] = json.dumps(
+            analysis, ensure_ascii=False, indent=2
+        )
+    else:
+        # v3 / v4 templates don't reference {analysis_block} — provide an
+        # empty string so str.format doesn't KeyError on a missing key.
+        base_kwargs["analysis_block"] = ""
+
+    # ---- Stage 2 (writer) — or single-pass for v3 / v4
+    prompt = prompt_tmpl.render(**base_kwargs)
+    (job_dir / "prompt.txt").write_text(prompt, encoding="utf-8")
+    stage_label = "Stage 2: write" if analysis is not None else "single-pass"
+    print(f"prompt: {len(prompt)} chars → prompt.txt ({stage_label})")
+
+    print(f"calling claude ({stage_label})...", flush=True)
     t0 = time.monotonic()
     raw = call_claude(prompt)
     elapsed = time.monotonic() - t0
@@ -323,6 +392,10 @@ def main() -> int:
     edl["profile_name"] = profile.name
     edl["prompt_template_version"] = prompt_tmpl.stamp
     edl["rendered_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
+    if analysis is not None:
+        # Stash the analysis alongside the EDL so a later debug session can
+        # see *why* the writer picked these shots without re-running Stage 1.
+        edl["stage1_analysis"] = analysis
 
     # Write the canonical sources array into the EDL so the renderer (and
     # the web UI) know which raw mp4s back which shots. This is the v4
