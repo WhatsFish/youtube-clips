@@ -53,17 +53,9 @@ export default async function Home() {
   return (
     <main className="max-w-3xl mx-auto px-5 py-12">
       <header className="mb-10">
-        <div className="flex items-baseline gap-4 flex-wrap mb-1">
-          <h1 className="text-2xl font-semibold tracking-tight">
-            youtube-clips
-          </h1>
-          <nav className="text-sm flex gap-3 text-neutral-500">
-            <span className="text-neutral-900 dark:text-neutral-100">renders</span>
-            <Link className="underline hover:text-neutral-900 dark:hover:text-neutral-100" href="/topics">
-              topics
-            </Link>
-          </nav>
-        </div>
+        <h1 className="text-2xl font-semibold tracking-tight mb-1">
+          youtube-clips
+        </h1>
         <p className="text-sm text-neutral-500">
           Profile-based multi-platform video remix pipeline.
         </p>
