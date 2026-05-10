@@ -3,7 +3,15 @@ import { query } from "./db";
 export type Shot = {
   narration: string;
   source_start_sec: number;
+  source_idx?: number;  // present from EDL prompt v4 onward; defaults to 0 (primary)
   purpose?: string;
+};
+
+export type EdlSource = {
+  video_id: string;
+  title?: string;
+  channel?: string;
+  role?: "primary" | "supplement";
 };
 
 export type Edl = {
@@ -14,10 +22,14 @@ export type Edl = {
   description_zh?: string;
   tags_zh?: string[];
   shots?: Shot[];
+  // v4+: multi-source EDLs carry the full sources array; older single-
+  // source EDLs only have the singular source_id below.
+  sources?: EdlSource[];
   prompt_template_version?: string;
   rendered_at?: string;
   topic_id?: number;
-  source_id?: number;
+  source_id?: number;        // primary source's DB id (always set)
+  source_ids?: number[];     // v4+: every source's DB id, primary first
   job_id?: number;
 };
 

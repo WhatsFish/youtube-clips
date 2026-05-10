@@ -83,19 +83,19 @@ def _stage_header(label: str) -> None:
     print(f"\n{'─' * 4} {label} {'─' * (54 - len(label))}", flush=True)
 
 
-def discover(topic: str, profile_name: str) -> dict:
-    """Run the discover-source script and return its JSON output."""
+def discover(topic: str, profile_name: str) -> tuple[dict, Path]:
+    """Run the discover-source script and return (pick_json, json_path)."""
     cmd = [
         str(PROJECT_ROOT / ".venv" / "bin" / "python"),
         str(PROJECT_ROOT / "scripts" / "discover-source.py"),
         "--topic", topic,
         "--profile", profile_name,
     ]
-    proc = subprocess.run(cmd, check=True)
+    subprocess.run(cmd, check=True)
     out_file = DISCOVER_BASE / profile_name / f"{_slugify(topic)}.json"
     if not out_file.exists():
         sys.exit(f"discover output not found: {out_file}")
-    return json.loads(out_file.read_text(encoding="utf-8"))
+    return json.loads(out_file.read_text(encoding="utf-8")), out_file
 
 
 def fetch_video_metadata(video_id: str) -> tuple[str, str]:
@@ -107,7 +107,26 @@ def fetch_video_metadata(video_id: str) -> tuple[str, str]:
     return (c.title, c.channel)
 
 
-def run_edl(
+def run_edl_from_discovery(
+    discovery_json: Path,
+    *,
+    profile_name: str,
+    prompt_version: str,
+    primary_video_id: str,
+) -> Path:
+    """Multi-source EDL: edl-prototype reads sources directly from discovery JSON."""
+    cmd = [
+        str(PROJECT_ROOT / ".venv" / "bin" / "python"),
+        str(PROJECT_ROOT / "scripts" / "edl-prototype.py"),
+        "--from-discovery", str(discovery_json),
+        "--profile", profile_name,
+        "--prompt-version", prompt_version,
+    ]
+    subprocess.run(cmd, check=True)
+    return Path("/video/youtube-clips/outputs/edl-prototype") / primary_video_id / "edl.json"
+
+
+def run_edl_single(
     video_id: str,
     *,
     title: str,
@@ -115,6 +134,7 @@ def run_edl(
     profile_name: str,
     prompt_version: str,
 ) -> Path:
+    """Single-source EDL (legacy --video-id path)."""
     cmd = [
         str(PROJECT_ROOT / ".venv" / "bin" / "python"),
         str(PROJECT_ROOT / "scripts" / "edl-prototype.py"),
@@ -156,68 +176,88 @@ def main() -> int:
 
     overall_t0 = time.monotonic()
 
-    # 1. Resolve which video we're operating on.
+    # 1. Resolve sources to use. --topic runs multi-source discovery
+    # (1-3 picks); --video-id is the legacy single-source path.
+    discovery_json: Path | None = None
     if args.topic:
         _stage_header("discover")
-        pick = discover(args.topic, args.profile)
-        if not pick.get("picked_id"):
+        pick, discovery_json = discover(args.topic, args.profile)
+        picked_sources = pick.get("picked_sources") or []
+        if not picked_sources:
             sys.exit(f"discovery returned skip: {pick.get('skip_reason')}")
-        video_id = pick["picked_id"]
-        title = pick["picked_title"]
-        channel = pick["picked_channel"]
+        sources_to_dl = [
+            (p["id"], p.get("title") or "(unknown)", p.get("channel") or "(unknown)")
+            for p in picked_sources
+        ]
+        primary_video_id = sources_to_dl[0][0]
     else:
-        video_id = args.video_id
+        primary_video_id = args.video_id
         if args.title and args.channel:
             title, channel = args.title, args.channel
         else:
             print("[meta] fetching title/channel via videos.list...", flush=True)
-            title, channel = fetch_video_metadata(video_id)
-        print(f"video_id: {video_id}")
+            title, channel = fetch_video_metadata(primary_video_id)
+        sources_to_dl = [(primary_video_id, title, channel)]
+        print(f"video_id: {primary_video_id}")
         print(f"title:    {title}")
         print(f"channel:  {channel}")
 
-    # 2. Download.
+    # 2. Download — every picked source. The agent is conservative about
+    # picking 2 or 3, so this loops 1-3 times typically. Each download
+    # runs through the same yt-dlp + cookies + PO-token path.
     _stage_header("download")
     cookie_age_preflight()
-    try:
-        result = download(video_id, force=args.force_download)
-    except CookiesMissingError as e:
-        sys.exit(f"\nERROR: {e}")
-    except BotWallError as e:
-        sys.exit(
-            f"\nERROR: {e}\n"
-            f"Refresh ~/.config/youtube-clips-cookies.txt from a logged-in "
-            f"browser, then re-run this same command."
-        )
-    print(f"video: {result.video_path}")
-    print(f"vtt:   {result.vtt_path}")
-    if not result.vtt_path:
-        sys.exit("ERROR: no English captions found; cannot run the EDL agent")
+    print(f"sources to download: {len(sources_to_dl)}")
+    for vid, title, channel in sources_to_dl:
+        print(f"  → {vid}  {title[:55]}")
+        try:
+            result = download(vid, force=args.force_download)
+        except CookiesMissingError as e:
+            sys.exit(f"\nERROR: {e}")
+        except BotWallError as e:
+            sys.exit(
+                f"\nERROR ({vid}): {e}\n"
+                f"Refresh ~/.config/youtube-clips-cookies.txt from a logged-in "
+                f"browser, then re-run this same command."
+            )
+        if not result.vtt_path:
+            sys.exit(f"ERROR ({vid}): no English captions found; cannot run the EDL agent")
 
-    # 3. EDL.
+    # 3. EDL. Multi-source path reads the discovery JSON directly so
+    # edl-prototype sees titles/channels/roles without re-deriving them.
     _stage_header("edl")
-    edl_path = run_edl(
-        video_id,
-        title=title,
-        channel=channel,
-        profile_name=args.profile,
-        prompt_version=args.prompt_version,
-    )
+    if discovery_json is not None:
+        edl_path = run_edl_from_discovery(
+            discovery_json,
+            profile_name=args.profile,
+            prompt_version=args.prompt_version,
+            primary_video_id=primary_video_id,
+        )
+    else:
+        # --video-id legacy path: single source
+        vid, title, channel = sources_to_dl[0]
+        edl_path = run_edl_single(
+            vid,
+            title=title,
+            channel=channel,
+            profile_name=args.profile,
+            prompt_version=args.prompt_version,
+        )
 
-    # 4. Render.
+    # 4. Render — keyed off the primary video_id (which is the EDL output dir).
     _stage_header("render")
-    render_path = run_render(video_id)
+    render_path = run_render(primary_video_id)
 
     elapsed = time.monotonic() - overall_t0
     print()
     print("=" * 60)
-    print(f"  produce complete: {video_id}")
+    print(f"  produce complete: {primary_video_id}  (sources: {len(sources_to_dl)})")
     print(f"  edl:    {edl_path}")
     print(f"  render: {render_path}")
     print(f"  total:  {elapsed:.1f}s ({elapsed/60:.1f} min)")
     print(
         f"  view:   https://ai-native.japaneast.cloudapp.azure.com/youtube-clips/"
-        f"jobs/{video_id}"
+        f"jobs/{primary_video_id}"
     )
     print("=" * 60)
     return 0

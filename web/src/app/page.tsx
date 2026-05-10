@@ -175,6 +175,9 @@ function JobCard({ job }: { job: Job }) {
         ) : null}
         <div className="text-xs text-neutral-500 flex flex-wrap gap-x-4 gap-y-1">
           <span>{job.shotCount} shots</span>
+          {(job.edl?.sources?.length ?? 1) > 1 ? (
+            <span>{job.edl!.sources!.length} sources</span>
+          ) : null}
           <span>{fmtMb(job.renderSizeBytes)}</span>
           <span>{fmtTime(job.renderMtime)}</span>
           <span className="font-mono">{job.id}</span>

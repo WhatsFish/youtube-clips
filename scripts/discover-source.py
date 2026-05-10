@@ -176,6 +176,10 @@ def main() -> int:
     raw_path.write_text(raw, encoding="utf-8")
     pick = extract_json(raw)
 
+    # Normalize v1 (single picked_id) → v2 (picked_sources[]) shape so the
+    # rest of the pipeline only sees one schema. v1 kept available as fallback.
+    pick = _normalize_pick_schema(pick)
+
     pick["topic"] = args.topic
     pick["profile_name"] = profile.name
     pick["prompt_template_version"] = pt.stamp
@@ -185,9 +189,14 @@ def main() -> int:
     pick["discovered_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
     out_path.write_text(json.dumps(pick, ensure_ascii=False, indent=2), encoding="utf-8")
 
+    picked = pick.get("picked_sources") or []
+
     # Persist to Postgres so the rest of the pipeline (and the web UI)
-    # can find this discovery without scanning the filesystem.
-    if pick.get("picked_id"):
+    # can find this discovery without scanning the filesystem. We write
+    # one Source row per picked video; the primary's id stays in the
+    # legacy `source_id` field on the discovery JSON (single-source
+    # backward compat for tooling), and the full list is in source_ids.
+    if picked:
         topic_id = db.upsert_topic(
             profile_id=profile.id,
             title=args.topic,
@@ -195,39 +204,49 @@ def main() -> int:
             status="approved",
             source="agent",
         )
-        # Find the picked candidate's full metadata to feed into the source row.
-        picked_meta = next(
-            (c for c in short_list if c.id == pick["picked_id"]),
-            None,
-        )
-        source_id = db.upsert_source(
-            profile_id=profile.id,
-            source_platform="youtube",
-            external_id=pick["picked_id"],
-            url=f"https://www.youtube.com/watch?v={pick['picked_id']}",
-            title=pick["picked_title"],
-            channel=pick["picked_channel"],
-            duration_sec=picked_meta.duration_sec if picked_meta else None,
-            source_language="en",
-            metadata={
-                "view_count": picked_meta.view_count if picked_meta else None,
-                "published_at": picked_meta.published_at if picked_meta else None,
-                "has_captions": picked_meta.has_captions if picked_meta else None,
-                "discovered_for_topic_id": topic_id,
-            },
-        )
+        source_ids: list[int] = []
+        for ps in picked:
+            picked_meta = next((c for c in short_list if c.id == ps["id"]), None)
+            sid = db.upsert_source(
+                profile_id=profile.id,
+                source_platform="youtube",
+                external_id=ps["id"],
+                url=f"https://www.youtube.com/watch?v={ps['id']}",
+                title=ps.get("title"),
+                channel=ps.get("channel"),
+                duration_sec=picked_meta.duration_sec if picked_meta else None,
+                source_language="en",
+                metadata={
+                    "view_count": picked_meta.view_count if picked_meta else None,
+                    "published_at": picked_meta.published_at if picked_meta else None,
+                    "has_captions": picked_meta.has_captions if picked_meta else None,
+                    "role": ps.get("role"),
+                    "discovered_for_topic_id": topic_id,
+                },
+            )
+            ps["source_id"] = sid
+            source_ids.append(sid)
         pick["topic_id"] = topic_id
-        pick["source_id"] = source_id
+        pick["source_ids"] = source_ids
+        # Legacy field: primary source_id, kept so single-source tooling
+        # and downstream backward-compat paths still work.
+        pick["source_id"] = source_ids[0]
+        pick["picked_id"] = picked[0]["id"]
+        pick["picked_title"] = picked[0].get("title")
+        pick["picked_channel"] = picked[0].get("channel")
         out_path.write_text(json.dumps(pick, ensure_ascii=False, indent=2), encoding="utf-8")
-        print(f"db: topic_id={topic_id} source_id={source_id}")
+        print(f"db: topic_id={topic_id} source_ids={source_ids}")
 
     print()
     print("=" * 60)
-    if pick.get("picked_id"):
-        print(f"  picked:  {pick['picked_id']}")
-        print(f"  title:   {pick['picked_title']}")
-        print(f"  channel: {pick['picked_channel']}")
-        print(f"  reason:  {pick['reason_zh']}")
+    if picked:
+        print(f"  picked {len(picked)} source{'s' if len(picked) > 1 else ''}:")
+        for i, ps in enumerate(picked):
+            tag = "primary  " if i == 0 else "supplement"
+            print(f"    [{i}] {tag}  {ps['id']}  {ps.get('title','')[:55]}")
+            if ps.get("what_it_brings_zh"):
+                print(f"        贡献: {ps['what_it_brings_zh']}")
+        print(f"  reason:  {pick.get('reason_zh','')}")
         print()
         print(f"  alternatives ({len(pick.get('alternatives', []))}):")
         for a in pick.get("alternatives", []):
@@ -235,25 +254,40 @@ def main() -> int:
         print()
         print(f"  saved:   {out_path}")
         print()
-        print("  next:")
-        print(f"    .venv/bin/yt-dlp --cookies ~/.config/youtube-clips-cookies.txt \\")
-        print(f"      --remote-components ejs:github \\")
-        print(f"      -f 'bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]' \\")
-        print(f"      --merge-output-format mp4 --write-auto-subs --write-subs \\")
-        print(f"      --sub-langs en,en-US --sub-format vtt \\")
-        print(f"      -o '/video/youtube-clips/raw/{pick['picked_id']}/source.%(ext)s' \\")
-        print(f"      'https://www.youtube.com/watch?v={pick['picked_id']}'")
-        print()
-        print(f"    .venv/bin/python scripts/edl-prototype.py \\")
-        print(f"      --title {json.dumps(pick['picked_title'])} \\")
-        print(f"      --channel {json.dumps(pick['picked_channel'])} \\")
-        print(f"      -- '{pick['picked_id']}'")
-        print()
-        print(f"    .venv/bin/python scripts/edl-render.py -- '{pick['picked_id']}'")
+        print("  next: produce.py orchestrates download(s) + EDL + render")
+        print(f"        (or edl-prototype.py --from-discovery {out_path})")
     else:
         print(f"  SKIP: {pick.get('skip_reason')}")
     print("=" * 60)
     return 0
+
+
+def _normalize_pick_schema(pick: dict) -> dict:
+    """Coerce v1 (single picked_id) and v2 (picked_sources[]) outputs into a
+    unified shape. The rest of the pipeline only ever sees `picked_sources`.
+
+    v1 input shape: {"picked_id", "picked_title", "picked_channel", ...}
+    v2 input shape: {"picked_sources": [{"id","title","channel","role"}], ...}
+    """
+    if pick.get("picked_sources"):
+        # v2 — already in target shape. Ensure the first one is marked primary.
+        srcs = pick["picked_sources"]
+        for i, s in enumerate(srcs):
+            s.setdefault("role", "primary" if i == 0 else "supplement")
+        return pick
+    if pick.get("picked_id"):
+        # v1 — wrap the single pick.
+        pick["picked_sources"] = [{
+            "id": pick["picked_id"],
+            "title": pick.get("picked_title"),
+            "channel": pick.get("picked_channel"),
+            "role": "primary",
+            "what_it_brings_zh": pick.get("reason_zh"),
+        }]
+        return pick
+    # No pick (skip case) — leave alone; caller checks picked_sources truthiness.
+    pick.setdefault("picked_sources", [])
+    return pick
 
 
 if __name__ == "__main__":

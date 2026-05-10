@@ -206,19 +206,14 @@ def concat(parts: list[Path], out: Path, work_dir: Path) -> None:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("video_id")
+    ap.add_argument("video_id", help="primary source's video_id (matches the EDL output dir)")
     args = ap.parse_args()
 
     if "AZURE_SPEECH_KEY" not in os.environ:
         sys.exit("source ~/.config/youtube-clips.env first")
 
-    raw_dir = RAW_BASE / args.video_id
     job_dir = OUT_BASE / args.video_id
-    source = raw_dir / "source.mp4"
     edl_path = job_dir / "edl.json"
-
-    if not source.exists():
-        sys.exit(f"missing source: {source}")
     if not edl_path.exists():
         sys.exit(f"missing edl: {edl_path}")
 
@@ -230,21 +225,44 @@ def main() -> int:
     if not shots:
         sys.exit("EDL has no shots")
 
+    # Resolve sources. v4 EDLs carry an explicit `sources[]`; pre-v4
+    # single-source EDLs only have shots[*].source_start_sec and the
+    # implicit assumption that the source mp4 lives at RAW_BASE/<arg>.
+    sources_meta = edl.get("sources")
+    if sources_meta:
+        source_paths: list[Path] = []
+        source_durs: list[float] = []
+        for i, s in enumerate(sources_meta):
+            sp = RAW_BASE / s["video_id"] / "source.mp4"
+            if not sp.exists():
+                sys.exit(f"missing source mp4 for source_idx={i}: {sp}")
+            source_paths.append(sp)
+            source_durs.append(ffprobe_duration(sp))
+        print(f"sources: {len(source_paths)} ({', '.join(s['video_id'] for s in sources_meta)})")
+    else:
+        sp = RAW_BASE / args.video_id / "source.mp4"
+        if not sp.exists():
+            sys.exit(f"missing source: {sp}")
+        source_paths = [sp]
+        source_durs = [ffprobe_duration(sp)]
+        print(f"sources: 1 (legacy single-source EDL, video_id={args.video_id})")
+
     voice = edl.get("voice", DEFAULT_VOICE)
     rate_pct = int(edl.get("rate_pct", DEFAULT_RATE_PCT))
-    source_dur = ffprobe_duration(source)
 
     work_dir = job_dir / "_work"
     work_dir.mkdir(exist_ok=True)
 
     print(f"voice: {voice}  rate: +{rate_pct}%  shots: {len(shots)}")
-    print(f"source_dur: {source_dur:.1f}s")
 
     parts: list[Path] = []
     overall_t0 = time.monotonic()
 
     for i, sh in enumerate(shots):
         narr_text = sh["narration"]
+        src_idx = int(sh.get("source_idx", 0))
+        if src_idx < 0 or src_idx >= len(source_paths):
+            sys.exit(f"shot {i}: source_idx={src_idx} out of range (have {len(source_paths)} sources)")
         src_start = float(sh["source_start_sec"])
 
         label = stage(f"s{i:02d} tts ({len(narr_text)}c)")
@@ -253,9 +271,16 @@ def main() -> int:
         narr_dur = ffprobe_duration(narr_audio)
         done(label)
 
-        label = stage(f"s{i:02d} shot ({narr_dur:.1f}s, src@{src_start:.1f})")
+        label = stage(f"s{i:02d} shot ({narr_dur:.1f}s, src{src_idx}@{src_start:.1f})")
         shot_mp4 = work_dir / f"s{i:02d}_shot.mp4"
-        render_shot(source, src_start, narr_dur, narr_audio, shot_mp4, source_dur)
+        render_shot(
+            source_paths[src_idx],
+            src_start,
+            narr_dur,
+            narr_audio,
+            shot_mp4,
+            source_durs[src_idx],
+        )
         done(label)
         parts.append(shot_mp4)
 

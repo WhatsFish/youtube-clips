@@ -88,31 +88,65 @@ export default async function JobDetail({
         </section>
       ) : null}
 
+      {job.edl?.sources && job.edl.sources.length > 1 ? (
+        <section className="mb-6">
+          <h2 className="text-xs font-semibold uppercase tracking-wider text-neutral-500 mb-2">
+            sources ({job.edl.sources.length})
+          </h2>
+          <ol className="space-y-1">
+            {job.edl.sources.map((src, i) => (
+              <li key={i} className="text-xs flex gap-2">
+                <span className="font-mono text-neutral-500">[{i}]</span>
+                <span className="font-mono text-neutral-500">{src.role ?? "—"}</span>
+                <a
+                  className="underline truncate"
+                  href={`https://www.youtube.com/watch?v=${src.video_id}`}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  {src.title ?? src.video_id}
+                </a>
+                {src.channel ? (
+                  <span className="text-neutral-500">· {src.channel}</span>
+                ) : null}
+              </li>
+            ))}
+          </ol>
+        </section>
+      ) : null}
+
       {job.edl?.shots ? (
         <section className="mb-8">
           <h2 className="text-xs font-semibold uppercase tracking-wider text-neutral-500 mb-2">
             shots
           </h2>
           <ol className="space-y-2">
-            {job.edl.shots.map((s, i) => (
-              <li
-                key={i}
-                className="border border-neutral-200 dark:border-neutral-800 rounded-md p-3"
-              >
-                <div className="text-xs text-neutral-500 mb-1 flex gap-3">
-                  <span>#{i + 1}</span>
-                  <span className="font-mono">
-                    src @ {fmtTimestamp(s.source_start_sec)}
-                  </span>
-                </div>
-                <div className="text-sm">{s.narration}</div>
-                {s.purpose ? (
-                  <div className="text-xs italic text-neutral-500 mt-1">
-                    {s.purpose}
+            {job.edl.shots.map((s, i) => {
+              const srcIdx = s.source_idx ?? 0;
+              const showSrcLabel = (job.edl?.sources?.length ?? 1) > 1;
+              return (
+                <li
+                  key={i}
+                  className="border border-neutral-200 dark:border-neutral-800 rounded-md p-3"
+                >
+                  <div className="text-xs text-neutral-500 mb-1 flex gap-3">
+                    <span>#{i + 1}</span>
+                    {showSrcLabel ? (
+                      <span className="font-mono">src{srcIdx}</span>
+                    ) : null}
+                    <span className="font-mono">
+                      @ {fmtTimestamp(s.source_start_sec)}
+                    </span>
                   </div>
-                ) : null}
-              </li>
-            ))}
+                  <div className="text-sm">{s.narration}</div>
+                  {s.purpose ? (
+                    <div className="text-xs italic text-neutral-500 mt-1">
+                      {s.purpose}
+                    </div>
+                  ) : null}
+                </li>
+              );
+            })}
           </ol>
         </section>
       ) : null}
