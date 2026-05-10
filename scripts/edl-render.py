@@ -38,6 +38,7 @@ import requests
 # Pipeline helpers live one level up.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from pipeline import db
+from pipeline.vad import speech_intervals
 
 RAW_BASE = Path("/video/youtube-clips/raw")
 OUT_BASE = Path("/video/youtube-clips/outputs/edl-prototype")
@@ -55,11 +56,19 @@ AUDIO_ARGS = [
 ]
 
 # Volume balance for "narrator on top, original as ambience" feel.
-# SOURCE_VOL is the original English audio multiplier; very low so the
-# narration dominates but you can still tell the original speaker is
-# there. NARR_VOL boosts Azure TTS — its native level is around -16
-# LUFS which feels quiet against modern YouTube/Bilibili content.
-SOURCE_VOL = 0.10
+# Two source levels driven by VAD on the source audio:
+#   - SOURCE_VOL_SPEECH: when the source is actively speaking English,
+#     duck further so the narrator's Chinese stays clearly intelligible.
+#     Not 0 because dropping the source completely sounds unnatural —
+#     the picture suddenly feels muted; a small floor keeps the source
+#     "present" without competing.
+#   - SOURCE_VOL_AMBIENT: when the source is silent / music / room tone,
+#     restore to the previous default; this is the ambience floor and
+#     gives the rendered video a "still rolling" feel during cutaways.
+# NARR_VOL boosts Azure TTS — its native level is around -16 LUFS which
+# feels quiet against modern YouTube/Bilibili content.
+SOURCE_VOL_SPEECH = 0.03
+SOURCE_VOL_AMBIENT = 0.10
 NARR_VOL = 1.6
 
 # Defaults; can be overridden by EDL `voice` / `rate_pct` fields.
@@ -135,6 +144,40 @@ def _escape_xml(s: str) -> str:
     )
 
 
+def _build_volume_expr(
+    speech_intervals_global: list[tuple[float, float]],
+    shot_start: float,
+    shot_dur: float,
+) -> str:
+    """Translate global speech intervals into an ffmpeg volume expression
+    in shot-local time (post `-ss shot_start`, ffmpeg's `t` starts at 0).
+
+    Returns either a constant (when no speech intersects the shot window)
+    or a piecewise `if(or(...), SPEECH, AMBIENT)` expression. The
+    `between(t,a,b)` primitives are summed (each returns 0 or 1) and the
+    sum is treated as a boolean — non-zero means we're inside any speech
+    window. Trim each interval to the shot window and skip degenerate
+    ones (< 50 ms) so the expression doesn't bloat with no audible gain.
+    """
+    shot_end = shot_start + shot_dur
+    local: list[tuple[float, float]] = []
+    for vs, ve in speech_intervals_global:
+        if ve <= shot_start or vs >= shot_end:
+            continue
+        ls = max(0.0, vs - shot_start)
+        le = min(shot_dur, ve - shot_start)
+        if le - ls >= 0.05:
+            local.append((ls, le))
+    if not local:
+        return f"{SOURCE_VOL_AMBIENT:.3f}"
+    # ffmpeg's expression evaluator has no `>` operator — `if(cond, a, b)`
+    # itself treats any non-zero `cond` as true. Each `between` returns
+    # 0 or 1, so the sum is 0 when no interval matches and ≥1 inside any
+    # interval; passing the sum directly to `if` is the right shape.
+    parts = "+".join(f"between(t,{s:.3f},{e:.3f})" for s, e in local)
+    return f"if({parts},{SOURCE_VOL_SPEECH:.3f},{SOURCE_VOL_AMBIENT:.3f})"
+
+
 def render_shot(
     source: Path,
     source_start: float,
@@ -142,6 +185,7 @@ def render_shot(
     narration_audio: Path,
     out: Path,
     source_total_dur: float,
+    speech_intervals_global: list[tuple[float, float]] | None = None,
 ) -> None:
     """Render one shot to a self-contained mp4.
 
@@ -149,7 +193,9 @@ def render_shot(
     range runs short of `duration` (clipped to source end), pad the visual
     with a frozen last frame.
 
-    Audio: source@SOURCE_VOL mixed with narration_audio@NARR_VOL.
+    Audio: source ducked via VAD-driven envelope (SPEECH/AMBIENT levels)
+    mixed with narration_audio@NARR_VOL. If no speech_intervals_global is
+    supplied (legacy callers), fall back to a flat AMBIENT level.
     """
     # How much of the visual we can actually take from the source before
     # the source ends; the rest is filled with frozen last frame via tpad.
@@ -169,6 +215,17 @@ def render_shot(
         f"setsar=1"
     )
 
+    # eval=frame is required so ffmpeg re-evaluates the volume expression
+    # per audio frame against the running timestamp; without it, t is
+    # locked to 0 and the envelope is a constant.
+    intervals = speech_intervals_global or []
+    vol_expr = _build_volume_expr(intervals, source_start, visual_take)
+    bg_filter = (
+        f"[0:a]volume=volume='{vol_expr}':eval=frame[bg]"
+        if "if(" in vol_expr
+        else f"[0:a]volume={vol_expr}[bg]"
+    )
+
     cmd = [
         "ffmpeg", "-y", "-loglevel", "error",
         "-ss", f"{source_start:.3f}", "-t", f"{visual_take:.3f}",
@@ -176,7 +233,7 @@ def render_shot(
         "-i", str(narration_audio),
         "-filter_complex",
         f"[0:v]{vf}[v];"
-        f"[0:a]volume={SOURCE_VOL}[bg];"
+        f"{bg_filter};"
         f"[1:a]volume={NARR_VOL}[fg];"
         f"[bg][fg]amix=inputs=2:duration=longest:dropout_transition=0,aresample=48000[a]",
         "-map", "[v]", "-map", "[a]",
@@ -379,6 +436,22 @@ def main() -> int:
         source_durs = [ffprobe_duration(sp)]
         print(f"sources: 1 (legacy single-source EDL, video_id={args.video_id})")
 
+    # Pre-compute VAD on each source mp4 once. Each shot derives its own
+    # local volume envelope from the global speech intervals; running VAD
+    # per-shot would re-decode the same audio many times.
+    source_speech: list[list[tuple[float, float]]] = []
+    for i, sp in enumerate(source_paths):
+        label = stage(f"vad src{i}")
+        ivs = speech_intervals(sp)
+        speech_total = sum(e - s for s, e in ivs)
+        print(
+            f"  src{i}: {len(ivs)} speech intervals, "
+            f"{speech_total:.1f}s of {source_durs[i]:.1f}s "
+            f"({100 * speech_total / source_durs[i]:.0f}%)"
+        )
+        source_speech.append(ivs)
+        done(label)
+
     voice = edl.get("voice", DEFAULT_VOICE)
     rate_pct = int(edl.get("rate_pct", DEFAULT_RATE_PCT))
 
@@ -413,6 +486,7 @@ def main() -> int:
             narr_audio,
             shot_mp4,
             source_durs[src_idx],
+            speech_intervals_global=source_speech[src_idx],
         )
         done(label)
         parts.append(shot_mp4)
