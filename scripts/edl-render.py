@@ -194,33 +194,33 @@ def _build_volume_expr(
 def render_shot(
     source: Path,
     source_start: float,
-    duration: float,
+    narr_dur: float,
     narration_audio: Path,
     out: Path,
     source_total_dur: float,
+    *,
     speech_intervals_global: list[tuple[float, float]] | None = None,
+    tail_sec: float = 0.0,
 ) -> None:
     """Render one shot to a self-contained mp4.
 
-    Visual: source[source_start .. source_start + duration]. If the source
-    range runs short of `duration` (clipped to source end), pad the visual
-    with a frozen last frame.
+    Visual: source[source_start .. source_start + narr_dur + tail_sec].
+    If the source range runs short, pad the visual with a frozen last
+    frame.
 
-    Audio: source ducked via VAD-driven envelope (SPEECH/AMBIENT levels)
-    mixed with narration_audio@NARR_VOL. If no speech_intervals_global is
-    supplied (legacy callers), fall back to a flat AMBIENT level.
+    Audio:
+      0..narr_dur:  source ducked via VAD envelope + narration @ NARR_VOL
+      narr_dur..end: source forced to AMBIENT (regardless of VAD), no
+                    narration. This is the "let the picture breathe"
+                    pause the EDL agent requested via pacing.inter_shot_pause_sec.
+
+    A `tail_sec` of 0 collapses to v6 behaviour exactly.
     """
-    # How much of the visual we can actually take from the source before
-    # the source ends; the rest is filled with frozen last frame via tpad.
+    duration = narr_dur + tail_sec
     available = max(0.0, source_total_dur - source_start)
     visual_take = min(duration, available)
     pad_dur = max(0.0, duration - visual_take)
 
-    # Build filter chain. Two sub-filters on the video and on the audio.
-    # tpad clones the last frame to extend the visual; apad would extend
-    # the audio with silence — we don't need that here because the source
-    # audio chain ends at `visual_take` and amix with `duration=longest`
-    # will let narration carry past it.
     vf = (
         f"scale={W}:{H}:force_original_aspect_ratio=decrease,"
         f"pad={W}:{H}:(ow-iw)/2:(oh-ih)/2,"
@@ -228,16 +228,22 @@ def render_shot(
         f"setsar=1"
     )
 
-    # eval=frame is required so ffmpeg re-evaluates the volume expression
-    # per audio frame against the running timestamp; without it, t is
-    # locked to 0 and the envelope is a constant.
+    # During narr_dur: VAD envelope. During tail_sec: forced AMBIENT.
+    # Compose: if(t < narr_dur, vad_expr, AMBIENT).
     intervals = speech_intervals_global or []
-    vol_expr = _build_volume_expr(intervals, source_start, visual_take)
-    bg_filter = (
-        f"[0:a]volume=volume='{vol_expr}':eval=frame[bg]"
-        if "if(" in vol_expr
-        else f"[0:a]volume={vol_expr}[bg]"
-    )
+    vad_expr = _build_volume_expr(intervals, source_start, visual_take)
+    if tail_sec > 0:
+        vol_expr = f"if(lt(t,{narr_dur:.3f}),{vad_expr},{SOURCE_VOL_AMBIENT:.3f})"
+        bg_filter = f"[0:a]volume=volume='{vol_expr}':eval=frame[bg]"
+    else:
+        # Pre-pacing-aware shape; keep the simpler filter when the agent
+        # didn't ask for breathing room (e.g. dense finance content).
+        vol_expr = vad_expr
+        bg_filter = (
+            f"[0:a]volume=volume='{vol_expr}':eval=frame[bg]"
+            if "if(" in vol_expr
+            else f"[0:a]volume={vol_expr}[bg]"
+        )
 
     cmd = [
         "ffmpeg", "-y", "-loglevel", "error",
@@ -421,10 +427,18 @@ def write_ass_subs(
     out_path: Path,
     play_w: int = W,
     play_h: int = H,
+    *,
+    narration_durations: list[float] | None = None,
 ) -> None:
     """Generate an ASS subtitle file aligned to the concatenated render's
-    timeline. Each shot becomes one Dialogue event spanning that shot's
-    duration on the final timeline.
+    timeline. Each shot becomes one Dialogue event.
+
+    When `narration_durations` is supplied (pacing-aware path), each
+    subtitle event spans only the narration audio's actual length — the
+    subtitle disappears during the post-narration tail pause, matching
+    what the viewer is hearing instead of staying on screen through
+    silence. Without it, falls back to spanning the full shot duration
+    (legacy behaviour for shots with no tail).
     """
     style = (
         # Format fields per V4+ spec; ASS colors are &HAABBGGRR (alpha,
@@ -466,14 +480,21 @@ def write_ass_subs(
     )
     events = []
     t = 0.0
-    for sh, dur in zip(shots, shot_durations):
-        end = t + dur
+    nds = narration_durations if narration_durations is not None else shot_durations
+    for sh, shot_dur, narr_dur in zip(shots, shot_durations, nds):
+        # Subtitle timing tracks narration (what the viewer is hearing),
+        # not the full shot. With pacing.inter_shot_pause_sec > 0 these
+        # diverge and the subtitle correctly disappears during the
+        # breathing pause.
+        sub_end = t + narr_dur
         text = _ass_escape(sh.get("narration", ""))
         events.append(
-            f"Dialogue: 0,{_ass_timestamp(t)},{_ass_timestamp(end)},"
+            f"Dialogue: 0,{_ass_timestamp(t)},{_ass_timestamp(sub_end)},"
             f"Default,,0,0,0,,{text}"
         )
-        t = end
+        # Shot timeline still advances by the FULL shot duration so the
+        # next subtitle starts at the right concat-time offset.
+        t += shot_dur
     out_path.write_text(header + "\n".join(events) + "\n", encoding="utf-8")
 
 
@@ -564,13 +585,22 @@ def main() -> int:
     voice = edl.get("voice", DEFAULT_VOICE)
     rate_pct = int(edl.get("rate_pct", DEFAULT_RATE_PCT))
 
+    # Stage 2 (v7+) emits a `pacing` block; older EDLs don't and get a
+    # zero pause = v6 behaviour exactly. Clamp [0, 3] for sanity.
+    pacing_cfg = edl.get("pacing") or {}
+    inter_shot_pause = float(pacing_cfg.get("inter_shot_pause_sec") or 0.0)
+    inter_shot_pause = max(0.0, min(3.0, inter_shot_pause))
+    pacing_tier = pacing_cfg.get("tier") or ("legacy" if not pacing_cfg else "unknown")
+
     work_dir = job_dir / "_work"
     work_dir.mkdir(exist_ok=True)
 
     print(f"voice: {voice}  rate: +{rate_pct}%  shots: {len(shots)}")
+    print(f"pacing: {pacing_tier}  inter_shot_pause: {inter_shot_pause:.1f}s")
 
     parts: list[Path] = []
     shot_durations: list[float] = []
+    narration_durations: list[float] = []
     overall_t0 = time.monotonic()
 
     for i, sh in enumerate(shots):
@@ -586,7 +616,16 @@ def main() -> int:
         narr_dur = ffprobe_duration(narr_audio)
         done(label)
 
-        label = stage(f"s{i:02d} shot ({narr_dur:.1f}s, src{src_idx}@{src_start:.1f})")
+        # Last shot: no trailing pause. Putting silence at the very end
+        # would feel like the video stalled; let the final shot end on
+        # the narration's last word.
+        tail = inter_shot_pause if i < len(shots) - 1 else 0.0
+        shot_dur = narr_dur + tail
+
+        label = stage(
+            f"s{i:02d} shot ({narr_dur:.1f}s narr + {tail:.1f}s tail, "
+            f"src{src_idx}@{src_start:.1f})"
+        )
         shot_mp4 = work_dir / f"s{i:02d}_shot.mp4"
         render_shot(
             source_paths[src_idx],
@@ -596,10 +635,12 @@ def main() -> int:
             shot_mp4,
             source_durs[src_idx],
             speech_intervals_global=source_speech[src_idx],
+            tail_sec=tail,
         )
         done(label)
         parts.append(shot_mp4)
-        shot_durations.append(narr_dur)
+        shot_durations.append(shot_dur)
+        narration_durations.append(narr_dur)
 
     label = stage("concat")
     concat_mp4 = work_dir / "concat.mp4"
@@ -649,7 +690,12 @@ def main() -> int:
     # is render.mp4 (with subs).
     label = stage("subtitles")
     ass_path = work_dir / "subs.ass"
-    write_ass_subs(shot_durations, shots, ass_path)
+    write_ass_subs(
+        shot_durations,
+        shots,
+        ass_path,
+        narration_durations=narration_durations,
+    )
     out = job_dir / "render.mp4"
     burn_subs(bgm_input, ass_path, out)
     done(label)

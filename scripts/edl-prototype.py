@@ -67,6 +67,7 @@ from pipeline.prompts import load_prompt
 from pipeline.profiles import fetch_profile
 from pipeline.claude_io import call_claude, extract_json
 from pipeline.transcript import parse_vtt, format_transcript
+from pipeline.frames import sample_frames, DEFAULT_INTERVAL_SEC as FRAME_INTERVAL_SEC
 from pipeline import db
 
 RAW_BASE = Path("/video/youtube-clips/raw")
@@ -137,10 +138,18 @@ def _ffprobe_duration(path: Path) -> float:
 def build_prompt_kwargs(profile, sources: list[SourceSpec]):
     """Build the placeholder dict for the EDL prompt.
 
-    Produces the union of v3 (single-source) and v4 (multi-source)
-    placeholders so the prompt template chooses what it actually needs;
-    `str.format` silently drops any extras the active template doesn't
-    reference.
+    Produces the union of v3 (single-source) / v4 (multi-source) / v2
+    analyze-with-vision placeholders so the prompt template chooses what
+    it actually needs; `str.format` silently drops any extras the active
+    template doesn't reference.
+
+    Per-source `mode` is derived here:
+      - `transcript`  → `.vtt` exists
+      - `frames`      → no vtt; jpgs already extracted under
+                        RAW_BASE/<id>/frames/ (caller is responsible
+                        for the extraction before invoking)
+      - `both`        → both available (rare; we still prefer transcript
+                        evidence in the prompt to keep timing precise)
     """
     cfg = profile.config or {}
     ch = cfg.get("channel") or {}
@@ -154,29 +163,65 @@ def build_prompt_kwargs(profile, sources: list[SourceSpec]):
     )
     tone_description = ch.get("tone") or "professional, engaged, opinionated where it earns it"
 
-    # ---- v4: multi-source blocks --------------------------------------
-    sources_meta_lines = []
-    transcripts_blocks = []
+    # ---- v4: multi-source + per-source mode + frames ------------------
+    sources_meta_lines: list[str] = []
+    transcripts_blocks: list[str] = []
+    frames_blocks: list[str] = []
+    any_frames = False
     for i, s in enumerate(sources):
-        if not s.vtt:
-            sys.exit(f"missing transcript for source {s.video_id} ({s.vtt})")
         if not s.mp4.exists():
             sys.exit(f"missing video for source {s.video_id} ({s.mp4})")
         dur = _ffprobe_duration(s.mp4)
+        has_vtt = s.vtt is not None
+        frames_dir = RAW_BASE / s.video_id / "frames"
+        frame_paths = sorted(frames_dir.glob("frame-*.jpg")) if frames_dir.is_dir() else []
+        has_frames = bool(frame_paths)
+        if has_vtt and has_frames:
+            mode = "both"
+        elif has_vtt:
+            mode = "transcript"
+        elif has_frames:
+            mode = "frames"
+        else:
+            sys.exit(
+                f"source {s.video_id} has neither vtt nor extracted frames; "
+                f"run frame extraction or download captions first"
+            )
+        if has_frames:
+            any_frames = True
         sources_meta_lines.append(
-            f"[source_idx={i}]  role={s.role}\n"
+            f"[source_idx={i}]  role={s.role}  mode={mode}\n"
             f"  video_id: {s.video_id}\n"
             f"  title: {s.title}\n"
             f"  channel: {s.channel}\n"
             f"  duration_sec: {int(dur)}"
         )
-        entries = parse_vtt(s.vtt)
-        transcripts_blocks.append(
-            f"=== Source {i} (id={s.video_id}, title={s.title}) ===\n"
-            f"{format_transcript(entries)}"
-        )
+        if has_vtt:
+            entries = parse_vtt(s.vtt)
+            transcripts_blocks.append(
+                f"=== Source {i} (id={s.video_id}, title={s.title}, mode={mode}) ===\n"
+                f"{format_transcript(entries)}"
+            )
+        if has_frames:
+            # Each line is `frame-NNN.jpg → t=Ms` so the agent can map a
+            # picked frame back to a source timestamp without doing math.
+            frame_lines = [
+                f"  {p.name}  →  t={(int(p.stem.split('-')[-1]) - 1) * FRAME_INTERVAL_SEC}s"
+                for p in frame_paths
+            ]
+            frames_blocks.append(
+                f"=== Source {i} (id={s.video_id}, title={s.title}, "
+                f"interval={FRAME_INTERVAL_SEC}s, dir={frames_dir}) ===\n"
+                + "\n".join(frame_lines)
+                + "\n  ↑ Read each of these jpg paths via the Read tool to view the frame visually."
+            )
     sources_metadata = "\n\n".join(sources_meta_lines)
-    transcripts_block = "\n\n".join(transcripts_blocks)
+    transcripts_block = (
+        "\n\n".join(transcripts_blocks) if transcripts_blocks else "(no source has captions)"
+    )
+    frames_block = (
+        "\n\n".join(frames_blocks) if frames_blocks else "(no source needs frame sampling)"
+    )
 
     # ---- v3 single-source legacy placeholders -------------------------
     # When we have exactly one source, also expose v3's flat fields so
@@ -196,6 +241,9 @@ def build_prompt_kwargs(profile, sources: list[SourceSpec]):
         # v4 (multi-source)
         "sources_metadata": sources_metadata,
         "transcripts_block": transcripts_block,
+        # v2 analyze (vision-aware Stage 1)
+        "frames_block": frames_block,
+        "_any_frames": any_frames,  # consumed by main(), stripped before render
         # v3 (single-source legacy; harmless when v4 is active)
         "title": primary.title,
         "channel": primary.channel,
@@ -288,12 +336,29 @@ def main() -> int:
     for i, s in enumerate(sources):
         print(f"  [{i}] {s.role:<10} {s.video_id}  {s.title[:50]}")
 
-    # Pre-flight check on filesystem for every source.
+    # Pre-flight check on filesystem for every source. Sources without a
+    # vtt are not fatal anymore — we sample frames and run a vision-aware
+    # Stage 1 instead. This unlocks no-caption content (walking tours,
+    # ASMR, music videos, vlogs whose creator never enabled subtitles)
+    # which otherwise stalls the whole produce chain.
     for s in sources:
         if not s.mp4.exists():
             sys.exit(f"missing video for source {s.video_id}: {s.mp4}")
         if not s.vtt:
-            sys.exit(f"missing transcript for source {s.video_id} (no source.en.vtt)")
+            frames_dir = RAW_BASE / s.video_id / "frames"
+            existing = sorted(frames_dir.glob("frame-*.jpg")) if frames_dir.is_dir() else []
+            if existing:
+                print(
+                    f"  [{s.video_id}] no vtt; using {len(existing)} cached frames "
+                    f"under {frames_dir}"
+                )
+            else:
+                print(
+                    f"  [{s.video_id}] no vtt; sampling frames "
+                    f"(every {FRAME_INTERVAL_SEC}s) → {frames_dir}"
+                )
+                paths = sample_frames(s.mp4, frames_dir, interval_sec=FRAME_INTERVAL_SEC)
+                print(f"  [{s.video_id}] extracted {len(paths)} frames")
 
     # Load Profile + prompt template.
     profile = fetch_profile(args.profile)
@@ -309,6 +374,7 @@ def main() -> int:
     job_dir.mkdir(parents=True, exist_ok=True)
 
     base_kwargs = build_prompt_kwargs(profile, sources)
+    any_frames = base_kwargs.pop("_any_frames", False)
 
     # ---- Stage 1 (analyze) — only when the active edl-continuous prompt is v5+
     # The single-pass v3/v4 templates have no analysis_block placeholder, so
@@ -319,15 +385,46 @@ def main() -> int:
     # output stays coherent because Stage 2 still owns the channel voice.
     analysis: dict | None = None
     if prompt_tmpl.version >= 5:
-        analyze_tmpl = load_prompt("edl-analyze", version="latest")
-        print(f"prompt:  {analyze_tmpl.stamp} (Stage 1: analyze)")
+        # Pick the analyze prompt: v2 (vision-aware, requires Read tool +
+        # add-dir for the frames) when any source needs frame inspection,
+        # else the cheaper text-only v1.
+        analyze_tmpl = load_prompt("edl-analyze", version=2 if any_frames else 1)
+        print(
+            f"prompt:  {analyze_tmpl.stamp} "
+            f"(Stage 1: analyze{', vision-aware' if any_frames else ''})"
+        )
         analyze_prompt = analyze_tmpl.render(**base_kwargs)
         (job_dir / "analyze.prompt.txt").write_text(analyze_prompt, encoding="utf-8")
         print(f"prompt: {len(analyze_prompt)} chars → analyze.prompt.txt")
 
-        print("calling claude (Stage 1: analyze)...", flush=True)
+        print(
+            f"calling claude (Stage 1: analyze{'  + Read on frames' if any_frames else ''})...",
+            flush=True,
+        )
         t0 = time.monotonic()
-        raw1 = call_claude(analyze_prompt)
+        if any_frames:
+            # Read-tool-driven: agent walks each frame jpg one at a time,
+            # so max_turns must scale with frame count. Budget = 2× frames
+            # (one Read per frame + one summary turn, with headroom for
+            # any clarifying turns the agent inserts).
+            frames_dirs = [
+                RAW_BASE / s.video_id / "frames"
+                for s in sources
+                if (RAW_BASE / s.video_id / "frames").is_dir()
+            ]
+            total_frames = sum(
+                len(list(d.glob("frame-*.jpg"))) for d in frames_dirs
+            )
+            turn_budget = max(20, 2 * total_frames + 5)
+            raw1 = call_claude(
+                analyze_prompt,
+                timeout=900,             # vision Stage 1 reads many frames; allow 15 min
+                max_turns=turn_budget,
+                tools=["Read"],
+                add_dirs=frames_dirs,
+            )
+        else:
+            raw1 = call_claude(analyze_prompt)
         elapsed1 = time.monotonic() - t0
         (job_dir / "analyze.raw-claude.txt").write_text(raw1, encoding="utf-8")
         print(f"Stage 1 returned in {elapsed1:.1f}s, {len(raw1)} chars")

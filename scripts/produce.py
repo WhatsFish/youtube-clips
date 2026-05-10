@@ -221,7 +221,14 @@ def main() -> int:
                 f"browser, then re-run this same command."
             )
         if not result.vtt_path:
-            sys.exit(f"ERROR ({vid}): no English captions found; cannot run the EDL agent")
+            # No captions of any kind: not fatal anymore. edl-prototype
+            # will sample frames and run a vision-aware Stage 1 that reads
+            # them via the Read tool. This unlocks ASMR / walking tour /
+            # music / no-subtitle vlogs that previously stalled the chain.
+            print(
+                f"  [{vid}] no captions found; vision-aware Stage 1 will be used "
+                f"(frames will be sampled at EDL time)"
+            )
 
     # 3. EDL. Multi-source path reads the discovery JSON directly so
     # edl-prototype sees titles/channels/roles without re-deriving them.

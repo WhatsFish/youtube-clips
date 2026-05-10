@@ -69,15 +69,39 @@ def _escape_embedded_quotes(s: str) -> str:
     return "".join(out)
 
 
-def call_claude(prompt: str, *, timeout: int = 300, max_turns: int = 1) -> str:
-    """Run `claude -p`, return stdout. Aborts the process on non-zero exit."""
+def call_claude(
+    prompt: str,
+    *,
+    timeout: int = 300,
+    max_turns: int = 1,
+    tools: list[str] | None = None,
+    add_dirs: list[str | Path] | None = None,
+) -> str:
+    """Run `claude -p`, return stdout. Aborts the process on non-zero exit.
+
+    For vision-aware calls (Stage 1 reading frame jpgs out-of-band),
+    pass `tools=["Read"]` and `add_dirs=[<frames_dir>]` so the agent can
+    Read the images. Bumps `max_turns` accordingly is the caller's
+    responsibility — one Read per frame plus one final answer turn.
+    Without those args the function behaves exactly like before
+    (single-turn, no tool access), preserving the cheap text-only path.
+    """
+    cmd = [
+        CLAUDE_BIN,
+        "-p", prompt,
+        "--dangerously-skip-permissions",
+        "--max-turns", str(max_turns),
+    ]
+    if tools:
+        # `--tools` accepts a space-separated list per CLI help. Passing as
+        # a single token preserves shell-safe quoting (subprocess.run with a
+        # list arg doesn't shell-interpret anyway, but keep tokens clean).
+        cmd.extend(["--tools", " ".join(tools)])
+    if add_dirs:
+        cmd.append("--add-dir")
+        cmd.extend(str(p) for p in add_dirs)
     proc = subprocess.run(
-        [
-            CLAUDE_BIN,
-            "-p", prompt,
-            "--dangerously-skip-permissions",
-            "--max-turns", str(max_turns),
-        ],
+        cmd,
         capture_output=True,
         text=True,
         timeout=timeout,
