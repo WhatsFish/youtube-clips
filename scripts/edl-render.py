@@ -204,6 +204,138 @@ def concat(parts: list[Path], out: Path, work_dir: Path) -> None:
     )
 
 
+# ---- Subtitle burn-in ------------------------------------------------------
+# We bake Chinese captions directly into the final mp4 (rather than ship a
+# sidecar .srt) because the operator uploads to Bilibili / 抖音 / TikTok by
+# hand, and those platforms either re-encode anyway or mangle external
+# subtitle tracks. Bilibili-style burned subs also hit harder visually.
+#
+# We use ASS instead of SRT because libass's outline + shadow rendering on
+# Chinese characters is much more readable over busy B-roll than SRT's
+# default style.
+
+# Bilibili-ish lower-third style: bold sans-serif, white fill, black
+# outline, semi-transparent shadow. PlayRes is locked at 1280x720 to match
+# render output so font sizes are predictable.
+SUBTITLE_FONT = "Noto Sans CJK SC"
+SUBTITLE_SIZE = 38
+# Place subtitles above where most YouTube/Bloomberg/CNBC lower-thirds
+# sit (roughly 0-90px from bottom). 110px clears the typical name-supers
+# and ticker bars while still feeling like a subtitle, not a caption-card.
+SUBTITLE_MARGIN_V = 110
+
+
+def _ass_timestamp(sec: float) -> str:
+    """Format float seconds as ASS H:MM:SS.cc (centiseconds, exactly 2 digits)."""
+    h = int(sec // 3600)
+    m = int((sec % 3600) // 60)
+    s = sec - h * 3600 - m * 60
+    return f"{h}:{m:02d}:{s:05.2f}"
+
+
+def _ass_escape(text: str) -> str:
+    """Escape characters that have meaning to libass dialogue lines.
+
+    Inside Dialogue text, the special tokens are `{...}` (override blocks)
+    and `\\N` / `\\n` / `\\h` (line break / soft break / hard space). The
+    raw narration shouldn't contain `{` or `}` or stray backslashes, but
+    sanitize anyway so a future edit can't silently break rendering.
+    """
+    return (
+        text.replace("\\", "\\\\")
+            .replace("{", "\\{")
+            .replace("}", "\\}")
+            .replace("\n", " ")
+    )
+
+
+def write_ass_subs(
+    shot_durations: list[float],
+    shots: list[dict],
+    out_path: Path,
+    play_w: int = W,
+    play_h: int = H,
+) -> None:
+    """Generate an ASS subtitle file aligned to the concatenated render's
+    timeline. Each shot becomes one Dialogue event spanning that shot's
+    duration on the final timeline.
+    """
+    style = (
+        # Format fields per V4+ spec; ASS colors are &HAABBGGRR (alpha,
+        # then blue-green-red). White fill (&H00FFFFFF). Black outline
+        # for stroke-on-busy-source-video (&H000000FF used as Secondary,
+        # not actually rendered for static subs). 60%-alpha black box
+        # behind text (&H99000000) — alpha 0x99 ≈ 60%, dark enough to
+        # read white text over any source clutter (Bloomberg lower-
+        # thirds, news tickers, b-roll graphics) but not so opaque that
+        # it dominates the frame. BorderStyle=3 (opaque-ish box rendered
+        # behind text) is the key to readability against busy B-roll;
+        # outline mode (BorderStyle=1) blew away too easily over the
+        # red CNBC banners during the dry-run frame check. Bold=1 for
+        # stroke weight. Alignment=2 (bottom-center). MarginV from the
+        # bottom edge of PlayResY.
+        f"Style: Default,{SUBTITLE_FONT},{SUBTITLE_SIZE},"
+        "&H00FFFFFF,&H00FFFFFF,&H00000000,&H99000000,"
+        "1,0,0,0,100,100,0,0,3,1.5,0,2,"
+        f"60,60,{SUBTITLE_MARGIN_V},1"
+    )
+    header = (
+        "[Script Info]\n"
+        "ScriptType: v4.00+\n"
+        f"PlayResX: {play_w}\n"
+        f"PlayResY: {play_h}\n"
+        "WrapStyle: 0\n"
+        "ScaledBorderAndShadow: yes\n"
+        "\n"
+        "[V4+ Styles]\n"
+        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, "
+        "OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, "
+        "ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, "
+        "Alignment, MarginL, MarginR, MarginV, Encoding\n"
+        f"{style}\n"
+        "\n"
+        "[Events]\n"
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, "
+        "MarginV, Effect, Text\n"
+    )
+    events = []
+    t = 0.0
+    for sh, dur in zip(shots, shot_durations):
+        end = t + dur
+        text = _ass_escape(sh.get("narration", ""))
+        events.append(
+            f"Dialogue: 0,{_ass_timestamp(t)},{_ass_timestamp(end)},"
+            f"Default,,0,0,0,,{text}"
+        )
+        t = end
+    out_path.write_text(header + "\n".join(events) + "\n", encoding="utf-8")
+
+
+def burn_subs(in_path: Path, ass_path: Path, out_path: Path) -> None:
+    """Re-encode `in_path` with `ass_path` baked in, write to `out_path`.
+
+    Uses ffmpeg's libass-backed `subtitles` filter. The path is passed
+    through filter-graph quoting, which means single quotes wrap and
+    `:` / `\\` need escaping if they appear in the path. We control the
+    work_dir so this is always under a clean directory; the assertion
+    catches a future regression that might place subs.ass in a hostile
+    path.
+    """
+    sp = str(ass_path)
+    assert ":" not in sp and "'" not in sp and "\\" not in sp, sp
+    cmd = [
+        "ffmpeg", "-y", "-loglevel", "error",
+        "-i", str(in_path),
+        "-vf", f"subtitles={sp}",
+        # Keep audio passthrough; only video re-encodes.
+        "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+        "-pix_fmt", "yuv420p",
+        "-c:a", "copy",
+        str(out_path),
+    ]
+    subprocess.run(cmd, check=True)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("video_id", help="primary source's video_id (matches the EDL output dir)")
@@ -256,6 +388,7 @@ def main() -> int:
     print(f"voice: {voice}  rate: +{rate_pct}%  shots: {len(shots)}")
 
     parts: list[Path] = []
+    shot_durations: list[float] = []
     overall_t0 = time.monotonic()
 
     for i, sh in enumerate(shots):
@@ -283,10 +416,21 @@ def main() -> int:
         )
         done(label)
         parts.append(shot_mp4)
+        shot_durations.append(narr_dur)
 
     label = stage("concat")
+    concat_mp4 = work_dir / "concat.mp4"
+    concat(parts, concat_mp4, work_dir)
+    done(label)
+
+    # Burn Chinese subtitles into the final mp4. The pre-sub concat is
+    # kept under _work/ so a future debug pass can A/B compare; the
+    # operator-facing artifact is render.mp4 (with subs).
+    label = stage("subtitles")
+    ass_path = work_dir / "subs.ass"
+    write_ass_subs(shot_durations, shots, ass_path)
     out = job_dir / "render.mp4"
-    concat(parts, out, work_dir)
+    burn_subs(concat_mp4, ass_path, out)
     done(label)
 
     overall = time.monotonic() - overall_t0
