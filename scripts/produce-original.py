@@ -49,7 +49,7 @@ from pipeline.claude_io import call_claude, extract_json
 from pipeline.pexels import PexelsClient, slugify_query
 from pipeline.volcengine import VolcengineClient
 from pipeline.exemplars import render_exemplars_block
-from pipeline import db
+from pipeline import db, events
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 OUT_BASE = Path("/video/youtube-clips/outputs/edl-prototype")
@@ -220,6 +220,7 @@ def _acquire_assets(
     volc: VolcengineClient | None,
     *,
     global_strategy: str = "hybrid",
+    run_id: int | None = None,
 ) -> list[dict]:
     """Route each shot to Pexels or AI generation based on the agent's
     per-shot `asset_strategy` (and the global override).
@@ -243,17 +244,30 @@ def _acquire_assets(
             chosen = "ai"
         else:  # hybrid
             chosen = shot_strategy
+        events.emit(run_id, "acquire", "start",
+                    f"s{i:02d} {chosen}: {query[:60]}",
+                    shot_idx=i, strategy=chosen, query=query)
         if chosen == "ai":
             if volc is None:
                 print(
                     f"  s{i:02d} agent asked for AI but VOLC_ARK_API_KEY not set — "
                     f"falling back to pexels"
                 )
-                sources.append(_acquire_one_pexels(sh, i, query, assets_dir, pexels))
+                src = _acquire_one_pexels(sh, i, query, assets_dir, pexels)
+                events.emit(run_id, "acquire", "done",
+                            f"s{i:02d} fallback pexels:{src.get('video_id')}",
+                            shot_idx=i, video_id=src.get("video_id"))
             else:
-                sources.append(_acquire_one_ai(sh, i, query, assets_dir, volc))
+                src = _acquire_one_ai(sh, i, query, assets_dir, volc)
+                events.emit(run_id, "acquire", "done",
+                            f"s{i:02d} doubao:{src.get('video_id')}",
+                            shot_idx=i, video_id=src.get("video_id"))
         else:
-            sources.append(_acquire_one_pexels(sh, i, query, assets_dir, pexels))
+            src = _acquire_one_pexels(sh, i, query, assets_dir, pexels)
+            events.emit(run_id, "acquire", "done",
+                        f"s{i:02d} pexels:{src.get('video_id')}",
+                        shot_idx=i, video_id=src.get("video_id"))
+        sources.append(src)
     return sources
 
 
@@ -291,35 +305,63 @@ def main() -> int:
     job_dir.mkdir(parents=True, exist_ok=True)
     assets_dir = ASSETS_BASE / slug
 
+    run_id = events.start_run(
+        profile_id=profile.id,
+        kind="producer",
+        topic_title=args.topic,
+        url_slug=slug,
+    )
+    events.register_atexit(run_id)
+    print(f"run_id: {run_id}")
+
     # 1. Outline.
     _stage("outline")
+    events.emit(run_id, "outline", "start", "Stage 1: thesis + outline")
     outline = _outline(profile, args.topic, job_dir)
     (job_dir / "outline.json").write_text(
         json.dumps(outline, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     if outline.get("decision") == "skip":
-        print(f"outline returned skip: {outline.get('decision_reason_zh')}")
+        reason = outline.get("decision_reason_zh") or "outline skip"
+        print(f"outline returned skip: {reason}")
+        events.emit(run_id, "outline", "skip", reason)
+        events.finish_run(run_id, "skipped", reason)
         return 1
     print(f"thesis: {outline.get('thesis_zh')}")
     print(f"outline points: {len(outline.get('outline', []))}")
+    events.emit(run_id, "outline", "done",
+                outline.get("thesis_zh"),
+                points=len(outline.get("outline", [])))
 
     # 2. Script.
     _stage("script")
+    events.emit(run_id, "script", "start", "Stage 2: shot narration")
     script = _script(profile, args.topic, outline, job_dir)
     (job_dir / "script.json").write_text(
         json.dumps(script, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     if script.get("decision") == "skip":
-        print(f"script returned skip: {script.get('decision_reason')}")
+        reason = script.get("decision_reason") or "script skip"
+        print(f"script returned skip: {reason}")
+        events.emit(run_id, "script", "skip", reason)
+        events.finish_run(run_id, "skipped", reason)
         return 1
     shots = script.get("shots") or []
     if not shots:
+        events.emit(run_id, "script", "fail", "script returned no shots")
+        events.finish_run(run_id, "failed", "script returned no shots")
         sys.exit("script returned no shots")
     print(f"shots: {len(shots)}")
+    events.emit(run_id, "script", "done", f"{len(shots)} shots",
+                shots=len(shots),
+                voice=script.get("voice"),
+                pacing=(script.get("pacing") or {}).get("tier"))
 
     # 3. Acquire assets — Pexels stock and/or Doubao AI per the agent's
     #    per-shot decision (overridable via --asset-strategy).
     _stage(f"assets ({args.asset_strategy})")
+    events.emit(run_id, "assets", "start",
+                f"strategy={args.asset_strategy}, {len(shots)} shots")
     pexels = PexelsClient.from_env()
     try:
         volc = VolcengineClient()
@@ -328,12 +370,16 @@ def main() -> int:
         # If hybrid and any shot asked for AI, _acquire_assets falls
         # back to pexels per-shot (and warns).
         if args.asset_strategy == "ai":
+            events.emit(run_id, "assets", "fail", str(e))
+            events.finish_run(run_id, "failed", str(e))
             sys.exit(f"--asset-strategy ai requires VOLC_ARK_API_KEY: {e}")
         volc = None
     sources = _acquire_assets(
         shots, assets_dir, pexels, volc,
         global_strategy=args.asset_strategy,
+        run_id=run_id,
     )
+    events.emit(run_id, "assets", "done", f"{len(sources)} sources ready")
 
     # 4. Assemble EDL. Each shot points at its own freshly-downloaded
     # clip via source_idx; source_start_sec stays 0 (each clip plays
@@ -370,6 +416,18 @@ def main() -> int:
         "prompt_template_version": "producer-script.v1",
         "rendered_at": dt.datetime.now(dt.timezone.utc).isoformat(),
     }
+    # Voice/rate_pct fallback chain — same as edl-prototype: EDL > Profile > renderer default
+    _po = (profile.config or {}).get("output") or {}
+    voice_from_script = script.get("voice")
+    rate_from_script = script.get("rate_pct")
+    if voice_from_script:
+        edl["voice"] = voice_from_script
+    elif _po.get("tts_voice"):
+        edl["voice"] = _po["tts_voice"]
+    if rate_from_script is not None:
+        edl["rate_pct"] = rate_from_script
+    elif _po.get("tts_rate_pct") is not None:
+        edl["rate_pct"] = _po["tts_rate_pct"]
 
     # 5. Persist Topic + Job + Source rows.
     # `external_id` for producer sources is `pexels-<id>` — not a YouTube
@@ -414,20 +472,29 @@ def main() -> int:
             (job_id, job_id),
         )
 
+    events.attach_topic(run_id, topic_id)
+    events.attach_job(run_id, job_id)
+
     (job_dir / "edl.json").write_text(
         json.dumps(edl, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     print(f"edl saved: {job_dir / 'edl.json'}")
     print(f"db: topic_id={topic_id} source_ids={source_db_ids} job_id={job_id}")
+    events.emit(run_id, "edl_persist", "done",
+                f"job_id={job_id} sources={len(source_db_ids)}",
+                job_id=job_id, topic_id=topic_id)
 
     # 6. Render.
     _stage("render")
+    events.emit(run_id, "render", "start", f"{len(shots)} shots")
     cmd = [
         str(PROJECT_ROOT / ".venv" / "bin" / "python"),
         str(PROJECT_ROOT / "scripts" / "edl-render.py"),
+        "--run-id", str(run_id or ""),
         "--", slug,
     ]
     subprocess.run(cmd, check=True)
+    events.emit(run_id, "render", "done", "render.mp4 written")
 
     elapsed = time.monotonic() - overall_t0
     render_path = job_dir / "render.mp4"
@@ -443,6 +510,7 @@ def main() -> int:
         f"jobs/{slug}"
     )
     print("=" * 60)
+    events.finish_run(run_id, "completed")
     return 0
 
 

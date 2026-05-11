@@ -129,6 +129,47 @@ CREATE TABLE IF NOT EXISTS feedback (
 );
 CREATE INDEX IF NOT EXISTS feedback_job ON feedback (job_id, created_at DESC);
 
+-- Runs — one operator-initiated production attempt. Captures the whole
+-- lifecycle from discovery (or topic input) through render, including
+-- failures that happen before a `jobs` row would exist. `runs` is the
+-- parent of `jobs`: a successful run ends with a `job_id` set; a failed
+-- run (e.g. discovery skipped, download crashed) ends without one.
+--
+-- url_slug mirrors the value stamped into jobs.edl_jsonb -> 'url_slug' so
+-- the web layer can route /runs/<slug> deterministically before EDL exists.
+CREATE TABLE IF NOT EXISTS runs (
+  id            BIGSERIAL    PRIMARY KEY,
+  profile_id    BIGINT       NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  topic_id      BIGINT       REFERENCES topics(id) ON DELETE SET NULL,
+  job_id        BIGINT       REFERENCES jobs(id) ON DELETE SET NULL,
+  kind          TEXT         NOT NULL CHECK (kind IN ('commentary','synthesis','producer')),
+  topic_title   TEXT         NOT NULL,
+  url_slug      TEXT,
+  status        TEXT         NOT NULL DEFAULT 'running'
+    CHECK (status IN ('running','completed','failed','skipped')),
+  current_stage TEXT,
+  error_message TEXT,
+  started_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+  finished_at   TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS runs_status_started ON runs (status, started_at DESC);
+CREATE INDEX IF NOT EXISTS runs_url_slug ON runs (url_slug) WHERE url_slug IS NOT NULL;
+
+-- Run events — every stage transition (start / done / fail / skip) within
+-- a run. Web polls this table while runs.status = 'running' to render a
+-- live timeline. metadata carries stage-specific payload (shot index,
+-- file path, error stack, etc.) without rigid schema.
+CREATE TABLE IF NOT EXISTS run_events (
+  id         BIGSERIAL    PRIMARY KEY,
+  run_id     BIGINT       NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+  stage      TEXT         NOT NULL,
+  status     TEXT         NOT NULL CHECK (status IN ('start','done','fail','skip','info')),
+  message    TEXT,
+  metadata   JSONB,
+  created_at TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS run_events_run_ts ON run_events (run_id, created_at);
+
 -- ============================================================
 -- Seed: tech-insights-cn demo Profile
 -- ============================================================

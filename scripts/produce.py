@@ -40,6 +40,7 @@ from pipeline.claude_io import call_claude, extract_json
 from pipeline.transcript import parse_vtt, format_transcript
 from pipeline.downloader import download, BotWallError, CookiesMissingError, COOKIES_FILE
 from pipeline.youtube_search import enrich
+from pipeline import events
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DISCOVER_BASE = Path("/video/youtube-clips/outputs/discovered")
@@ -83,7 +84,7 @@ def _stage_header(label: str) -> None:
     print(f"\n{'─' * 4} {label} {'─' * (54 - len(label))}", flush=True)
 
 
-def discover(topic: str, profile_name: str) -> tuple[dict, Path]:
+def discover(topic: str, profile_name: str, run_id: int | None = None) -> tuple[dict, Path]:
     """Run the discover-source script and return (pick_json, json_path)."""
     cmd = [
         str(PROJECT_ROOT / ".venv" / "bin" / "python"),
@@ -91,6 +92,8 @@ def discover(topic: str, profile_name: str) -> tuple[dict, Path]:
         "--topic", topic,
         "--profile", profile_name,
     ]
+    if run_id is not None:
+        cmd.extend(["--run-id", str(run_id)])
     subprocess.run(cmd, check=True)
     out_file = DISCOVER_BASE / profile_name / f"{_slugify(topic)}.json"
     if not out_file.exists():
@@ -113,6 +116,7 @@ def run_edl_from_discovery(
     profile_name: str,
     prompt_version: str,
     primary_video_id: str,
+    run_id: int | None = None,
 ) -> Path:
     """Multi-source EDL: edl-prototype reads sources directly from discovery JSON."""
     cmd = [
@@ -122,6 +126,8 @@ def run_edl_from_discovery(
         "--profile", profile_name,
         "--prompt-version", prompt_version,
     ]
+    if run_id is not None:
+        cmd.extend(["--run-id", str(run_id)])
     subprocess.run(cmd, check=True)
     return Path("/video/youtube-clips/outputs/edl-prototype") / primary_video_id / "edl.json"
 
@@ -133,6 +139,7 @@ def run_edl_single(
     channel: str,
     profile_name: str,
     prompt_version: str,
+    run_id: int | None = None,
 ) -> Path:
     """Single-source EDL (legacy --video-id path)."""
     cmd = [
@@ -142,18 +149,22 @@ def run_edl_single(
         "--channel", channel,
         "--profile", profile_name,
         "--prompt-version", prompt_version,
-        "--", video_id,
     ]
+    if run_id is not None:
+        cmd.extend(["--run-id", str(run_id)])
+    cmd.extend(["--", video_id])
     subprocess.run(cmd, check=True)
     return Path("/video/youtube-clips/outputs/edl-prototype") / video_id / "edl.json"
 
 
-def run_render(video_id: str) -> Path:
+def run_render(video_id: str, run_id: int | None = None) -> Path:
     cmd = [
         str(PROJECT_ROOT / ".venv" / "bin" / "python"),
         str(PROJECT_ROOT / "scripts" / "edl-render.py"),
-        "--", video_id,
     ]
+    if run_id is not None:
+        cmd.extend(["--run-id", str(run_id)])
+    cmd.extend(["--", video_id])
     subprocess.run(cmd, check=True)
     return Path("/video/youtube-clips/outputs/edl-prototype") / video_id / "render.mp4"
 
@@ -176,20 +187,42 @@ def main() -> int:
 
     overall_t0 = time.monotonic()
 
+    # 0. Open a run so every stage emits into the same timeline.
+    # Profile is needed for the FK; kind is determined later (commentary
+    # vs synthesis depends on the Profile config) — start optimistic and
+    # let the EDL stage refine.
+    profile = fetch_profile(args.profile)
+    mode = ((profile.config or {}).get("channel") or {}).get("production_mode") or "commentary"
+    run_id = events.start_run(
+        profile_id=profile.id,
+        kind=mode if mode in ("commentary", "synthesis") else "commentary",
+        topic_title=args.topic or args.video_id or "(unknown)",
+    )
+    events.register_atexit(run_id)
+    print(f"run_id: {run_id}")
+
     # 1. Resolve sources to use. --topic runs multi-source discovery
     # (1-3 picks); --video-id is the legacy single-source path.
     discovery_json: Path | None = None
     if args.topic:
         _stage_header("discover")
-        pick, discovery_json = discover(args.topic, args.profile)
+        events.emit(run_id, "discover", "start", args.topic)
+        pick, discovery_json = discover(args.topic, args.profile, run_id=run_id)
         picked_sources = pick.get("picked_sources") or []
         if not picked_sources:
-            sys.exit(f"discovery returned skip: {pick.get('skip_reason')}")
+            reason = pick.get("skip_reason") or "discovery returned no picks"
+            events.emit(run_id, "discover", "skip", reason)
+            events.finish_run(run_id, "skipped", reason)
+            sys.exit(f"discovery returned skip: {reason}")
         sources_to_dl = [
             (p["id"], p.get("title") or "(unknown)", p.get("channel") or "(unknown)")
             for p in picked_sources
         ]
         primary_video_id = sources_to_dl[0][0]
+        events.emit(run_id, "discover", "done",
+                    f"picked {len(picked_sources)}: " + ", ".join(p["id"] for p in picked_sources),
+                    sources=[p["id"] for p in picked_sources])
+        events.attach_slug(run_id, primary_video_id)
     else:
         primary_video_id = args.video_id
         if args.title and args.channel:
@@ -201,11 +234,13 @@ def main() -> int:
         print(f"video_id: {primary_video_id}")
         print(f"title:    {title}")
         print(f"channel:  {channel}")
+        events.attach_slug(run_id, primary_video_id)
 
     # 2. Download — every picked source. The agent is conservative about
     # picking 2 or 3, so this loops 1-3 times typically. Each download
     # runs through the same yt-dlp + cookies + PO-token path.
     _stage_header("download")
+    events.emit(run_id, "download", "start", f"{len(sources_to_dl)} sources")
     cookie_age_preflight()
     print(f"sources to download: {len(sources_to_dl)}")
     for vid, title, channel in sources_to_dl:
@@ -213,8 +248,13 @@ def main() -> int:
         try:
             result = download(vid, force=args.force_download)
         except CookiesMissingError as e:
+            events.emit(run_id, "download", "fail", str(e), video_id=vid)
+            events.finish_run(run_id, "failed", str(e))
             sys.exit(f"\nERROR: {e}")
         except BotWallError as e:
+            msg = f"BotWallError on {vid}: {e}"
+            events.emit(run_id, "download", "fail", msg, video_id=vid)
+            events.finish_run(run_id, "failed", msg)
             sys.exit(
                 f"\nERROR ({vid}): {e}\n"
                 f"Refresh ~/.config/youtube-clips-cookies.txt from a logged-in "
@@ -229,6 +269,7 @@ def main() -> int:
                 f"  [{vid}] no captions found; vision-aware Stage 1 will be used "
                 f"(frames will be sampled at EDL time)"
             )
+    events.emit(run_id, "download", "done", f"{len(sources_to_dl)} downloaded")
 
     # 3. EDL. Multi-source path reads the discovery JSON directly so
     # edl-prototype sees titles/channels/roles without re-deriving them.
@@ -239,6 +280,7 @@ def main() -> int:
             profile_name=args.profile,
             prompt_version=args.prompt_version,
             primary_video_id=primary_video_id,
+            run_id=run_id,
         )
     else:
         # --video-id legacy path: single source
@@ -249,11 +291,12 @@ def main() -> int:
             channel=channel,
             profile_name=args.profile,
             prompt_version=args.prompt_version,
+            run_id=run_id,
         )
 
     # 4. Render — keyed off the primary video_id (which is the EDL output dir).
     _stage_header("render")
-    render_path = run_render(primary_video_id)
+    render_path = run_render(primary_video_id, run_id=run_id)
 
     elapsed = time.monotonic() - overall_t0
     print()
@@ -267,6 +310,7 @@ def main() -> int:
         f"jobs/{primary_video_id}"
     )
     print("=" * 60)
+    events.finish_run(run_id, "completed")
     return 0
 
 

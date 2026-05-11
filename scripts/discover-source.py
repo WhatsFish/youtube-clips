@@ -37,7 +37,7 @@ from pipeline.prompts import load_prompt
 from pipeline.profiles import fetch_profile
 from pipeline.claude_io import call_claude, extract_json
 from pipeline.youtube_search import search, VideoCandidate
-from pipeline import db
+from pipeline import db, events
 
 OUT_BASE = Path("/video/youtube-clips/outputs/discovered")
 
@@ -108,10 +108,18 @@ def main() -> int:
         help="Recency window: '6w', '30d', or 'YYYY-MM-DD' (default 6w)",
     )
     ap.add_argument("--prompt-version", default="latest")
+    ap.add_argument(
+        "--run-id",
+        type=int,
+        default=None,
+        help="Run id to attach events to (set by produce.py)",
+    )
     args = ap.parse_args()
+    run_id = args.run_id
 
     profile = fetch_profile(args.profile)
     print(f"profile: {profile.name}")
+    events.emit(run_id, "discover_search", "start", f"query={args.topic!r}")
 
     query = args.query or args.topic
     cutoff = parse_published_since(args.published_since)
@@ -124,6 +132,9 @@ def main() -> int:
         video_duration="medium",
     )
     print(f"got:     {len(raw_candidates)} raw candidates")
+    events.emit(run_id, "discover_search", "done",
+                f"{len(raw_candidates)} candidates from YouTube",
+                candidates=len(raw_candidates))
 
     # Hard-rule filter. has_captions in the YT Data API only flags *manual*
     # captions; auto-captions are virtually universal on English YouTube and
@@ -172,6 +183,8 @@ def main() -> int:
     prompt_path.write_text(prompt, encoding="utf-8")
 
     print(f"calling claude... ({len(prompt)} chars in)")
+    events.emit(run_id, "discover_pick", "start",
+                f"asking claude to pick from {len(short_list)} candidates")
     raw = call_claude(prompt)
     raw_path.write_text(raw, encoding="utf-8")
     pick = extract_json(raw)
@@ -236,6 +249,13 @@ def main() -> int:
         pick["picked_channel"] = picked[0].get("channel")
         out_path.write_text(json.dumps(pick, ensure_ascii=False, indent=2), encoding="utf-8")
         print(f"db: topic_id={topic_id} source_ids={source_ids}")
+        events.attach_topic(run_id, topic_id)
+        events.emit(run_id, "discover_pick", "done",
+                    f"picked {len(picked)}: " + ", ".join(p["id"] for p in picked),
+                    picked=[p["id"] for p in picked],
+                    topic_id=topic_id, source_ids=source_ids)
+    else:
+        events.emit(run_id, "discover_pick", "skip", pick.get("skip_reason"))
 
     print()
     print("=" * 60)

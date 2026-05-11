@@ -37,7 +37,7 @@ import requests
 
 # Pipeline helpers live one level up.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from pipeline import db
+from pipeline import db, events
 from pipeline.vad import speech_intervals, _has_audio_stream
 from pipeline.bgm import pick_track
 
@@ -565,7 +565,14 @@ def burn_subs(in_path: Path, ass_path: Path, out_path: Path) -> None:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("video_id", help="primary source's video_id (matches the EDL output dir)")
+    ap.add_argument(
+        "--run-id",
+        type=int,
+        default=None,
+        help="Run id to attach events to (set by produce.py / produce-original.py)",
+    )
     args = ap.parse_args()
+    run_id = args.run_id
 
     if "AZURE_SPEECH_KEY" not in os.environ:
         sys.exit("source ~/.config/youtube-clips.env first")
@@ -647,6 +654,10 @@ def main() -> int:
 
     print(f"voice: {voice}  rate: +{rate_pct}%  shots: {len(shots)}")
     print(f"pacing: {pacing_tier}  inter_shot_pause: {inter_shot_pause:.1f}s")
+    events.emit(run_id, "render_setup", "done",
+                f"voice={voice} pacing={pacing_tier} shots={len(shots)}",
+                voice=voice, rate_pct=rate_pct, shots=len(shots),
+                pacing_tier=pacing_tier)
 
     parts: list[Path] = []
     shot_durations: list[float] = []
@@ -660,6 +671,9 @@ def main() -> int:
             sys.exit(f"shot {i}: source_idx={src_idx} out of range (have {len(source_paths)} sources)")
         src_start = float(sh["source_start_sec"])
 
+        events.emit(run_id, "render_shot", "start",
+                    f"s{i:02d}: {narr_text[:50]}",
+                    shot_idx=i, chars=len(narr_text))
         label = stage(f"s{i:02d} tts ({len(narr_text)}c)")
         narr_audio = work_dir / f"s{i:02d}_narr.mp3"
         tts(narr_text, narr_audio, voice, rate_pct)
@@ -695,8 +709,12 @@ def main() -> int:
         parts.append(shot_mp4)
         shot_durations.append(shot_dur)
         narration_durations.append(narr_dur)
+        events.emit(run_id, "render_shot", "done",
+                    f"s{i:02d} {shot_dur:.1f}s",
+                    shot_idx=i, duration_sec=round(shot_dur, 2))
 
     label = stage("concat")
+    events.emit(run_id, "render_concat", "start", f"{len(parts)} parts")
     concat_mp4 = work_dir / "concat.mp4"
     concat(parts, concat_mp4, work_dir)
     done(label)
@@ -742,7 +760,9 @@ def main() -> int:
     # (concat.mp4 or concat-with-bgm.mp4) is kept under _work/ so a
     # future debug pass can A/B compare; the operator-facing artifact
     # is render.mp4 (with subs).
+    events.emit(run_id, "render_concat", "done", "concat.mp4 written")
     label = stage("subtitles")
+    events.emit(run_id, "render_subs", "start", "burn ass subs")
     ass_path = work_dir / "subs.ass"
     write_ass_subs(
         shot_durations,
@@ -753,6 +773,7 @@ def main() -> int:
     out = job_dir / "render.mp4"
     burn_subs(bgm_input, ass_path, out)
     done(label)
+    events.emit(run_id, "render_subs", "done", "render.mp4 written")
 
     overall = time.monotonic() - overall_t0
     final_dur = ffprobe_duration(out)

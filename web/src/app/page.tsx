@@ -7,6 +7,8 @@ import {
   fmtTime,
   type Job,
 } from "@/lib/jobs";
+import { listActiveRuns, listRecentFailures } from "@/lib/runs";
+import ActiveRunsLive from "@/components/ActiveRunsLive";
 
 export const dynamic = "force-dynamic";
 
@@ -42,7 +44,11 @@ export default async function Home() {
     dbError = e instanceof Error ? e.message : String(e);
   }
 
-  const jobs = await listJobs();
+  const [jobs, activeRuns, recentFailures] = await Promise.all([
+    listJobs(),
+    listActiveRuns(),
+    listRecentFailures(5),
+  ]);
   const jobsByProfile = groupByProfile(jobs);
 
   // Profiles ordered by DB id; orphan jobs (Profile name not in DB) get a
@@ -69,6 +75,11 @@ export default async function Home() {
           <pre className="text-xs whitespace-pre-wrap">{dbError}</pre>
         </div>
       ) : null}
+
+      <ActiveRunsLive
+        initialActive={activeRuns}
+        recentFailures={recentFailures}
+      />
 
       {profiles.length === 0 && jobs.length === 0 ? (
         <div className="border border-dashed border-neutral-300 dark:border-neutral-700 rounded-md p-6 text-sm text-neutral-500">

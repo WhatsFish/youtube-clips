@@ -69,7 +69,7 @@ from pipeline.claude_io import call_claude, extract_json
 from pipeline.transcript import parse_vtt, format_transcript
 from pipeline.frames import sample_frames, DEFAULT_INTERVAL_SEC as FRAME_INTERVAL_SEC
 from pipeline.exemplars import render_exemplars_block
-from pipeline import db
+from pipeline import db, events
 
 RAW_BASE = Path("/video/youtube-clips/raw")
 OUT_BASE = Path("/video/youtube-clips/outputs/edl-prototype")
@@ -321,7 +321,14 @@ def main() -> int:
         default="latest",
         help='Prompt template version, "latest" or an integer (default: latest)',
     )
+    ap.add_argument(
+        "--run-id",
+        type=int,
+        default=None,
+        help="Run id to attach events to (set by produce.py)",
+    )
     args = ap.parse_args()
+    run_id = args.run_id
 
     # Resolve sources: discovery JSON > --source flags > legacy positional.
     if args.from_discovery:
@@ -415,6 +422,9 @@ def main() -> int:
     # tech/finance, and is also where the new commentary/synthesis split
     # plugs in.
     analysis: dict | None = None
+    events.emit(run_id, "edl_analyze", "start",
+                f"mode={mode}, {len(sources)} sources",
+                mode=mode, sources=len(sources))
     if "{analysis_block}" in prompt_tmpl.body:
         # Pick the analyze prompt: v2 (vision-aware, requires Read tool +
         # add-dir for the frames) when any source needs frame inspection,
@@ -470,9 +480,10 @@ def main() -> int:
         # an EDL with decision="skip" so produce.py fails clean (the
         # renderer already exits cleanly on non-make EDLs).
         if analysis.get("decision") == "skip":
+            reason = analysis.get("decision_reason_zh", "")
             edl_skip = {
                 "decision": "skip",
-                "decision_reason": analysis.get("decision_reason_zh", ""),
+                "decision_reason": reason,
                 "stage1_analysis": analysis,
                 "profile_name": profile.name,
                 "prompt_template_version": f"{analyze_tmpl.stamp}+skip",
@@ -491,10 +502,15 @@ def main() -> int:
             print(f"  decision: skip  (Stage 1)")
             print(f"  reason:   {edl_skip['decision_reason']}")
             print("=" * 60)
+            events.emit(run_id, "edl_analyze", "skip", reason)
+            events.finish_run(run_id, "skipped", reason)
             return 0
 
         n_insights = len(analysis.get("insights") or [])
         print(f"Stage 1 picked {n_insights} insights, narrative_arc set")
+        events.emit(run_id, "edl_analyze", "done",
+                    f"{n_insights} insights",
+                    insights=n_insights)
         base_kwargs["analysis_block"] = json.dumps(
             analysis, ensure_ascii=False, indent=2
         )
@@ -502,6 +518,7 @@ def main() -> int:
         # v3 / v4 templates don't reference {analysis_block} — provide an
         # empty string so str.format doesn't KeyError on a missing key.
         base_kwargs["analysis_block"] = ""
+        events.emit(run_id, "edl_analyze", "skip", "single-pass template")
 
     # ---- Stage 2 (writer) — or single-pass for v3 / v4
     prompt = prompt_tmpl.render(**base_kwargs)
@@ -509,6 +526,7 @@ def main() -> int:
     stage_label = "Stage 2: write" if analysis is not None else "single-pass"
     print(f"prompt: {len(prompt)} chars → prompt.txt ({stage_label})")
 
+    events.emit(run_id, "edl_write", "start", stage_label)
     print(f"calling claude ({stage_label})...", flush=True)
     t0 = time.monotonic()
     raw = call_claude(prompt)
@@ -520,6 +538,16 @@ def main() -> int:
     edl["profile_name"] = profile.name
     edl["prompt_template_version"] = prompt_tmpl.stamp
     edl["rendered_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
+    # Voice/rate_pct fallback chain (EDL > Profile > renderer default).
+    # Agent's prompt-emitted voice already lands in edl["voice"]; if it
+    # didn't emit, fall back to Profile's locked voice (operator
+    # branding decision). Renderer's final fallback (DEFAULT_VOICE) only
+    # kicks in if neither has anything.
+    _out_cfg = (profile.config or {}).get("output") or {}
+    if not edl.get("voice") and _out_cfg.get("tts_voice"):
+        edl["voice"] = _out_cfg["tts_voice"]
+    if edl.get("rate_pct") is None and _out_cfg.get("tts_rate_pct") is not None:
+        edl["rate_pct"] = _out_cfg["tts_rate_pct"]
     if analysis is not None:
         # Stash the analysis alongside the EDL so a later debug session can
         # see *why* the writer picked these shots without re-running Stage 1.
@@ -594,6 +622,14 @@ def main() -> int:
     )
     print(f"\nedl saved: {edl_path}")
     print(f"db: topic_id={topic_id} source_ids={source_db_ids} job_id={job_id}")
+    events.attach_topic(run_id, topic_id)
+    events.attach_job(run_id, job_id)
+    events.emit(run_id, "edl_write", "done",
+                f"{len(edl.get('shots') or [])} shots, job_id={job_id}",
+                shots=len(edl.get("shots") or []),
+                job_id=job_id, topic_id=topic_id,
+                voice=edl.get("voice"),
+                rate_pct=edl.get("rate_pct"))
 
     # Compact summary.
     print()
