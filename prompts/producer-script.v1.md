@@ -111,6 +111,9 @@ JSON schema:
 ================ PROFILE ================
 {profile_block}
 
+================ STYLE EXEMPLARS（如有，仅供学习钩子+节奏） ================
+{style_exemplars_block}
+
 ================ TOPIC ================
 {topic}
 

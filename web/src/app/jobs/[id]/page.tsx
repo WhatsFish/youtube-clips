@@ -14,7 +14,15 @@ export default async function JobDetail({
   if (!job) notFound();
 
   const mediaBase = `/youtube-clips/media/${encodeURIComponent(id)}`;
-  const sourceUrl = `https://www.youtube.com/watch?v=${id}`;
+  // For producer-mode renders the URL slug is `orig-...` (not a YouTube
+  // id), so a `youtube.com/watch?v=orig-...` link is bogus. We pick the
+  // top "source" indicator by EDL production_mode.
+  const productionMode = job.edl?.production_mode;
+  const isProducer = productionMode === "producer";
+  const sourceLabel = isProducer ? "Pexels 库存" : "YouTube";
+  const sourceUrl = isProducer
+    ? job.edl?.sources?.[0]?.page_url ?? "https://www.pexels.com/videos/"
+    : `https://www.youtube.com/watch?v=${id}`;
 
   return (
     <main className="max-w-4xl mx-auto px-5 py-12">
@@ -53,7 +61,7 @@ export default async function JobDetail({
             rel="noopener"
             className="underline hover:text-neutral-900 dark:hover:text-neutral-100"
           >
-            YouTube ↗
+            {sourceLabel} ↗
           </a>
         </div>
         <div>
@@ -94,23 +102,30 @@ export default async function JobDetail({
             sources ({job.edl.sources.length})
           </h2>
           <ol className="space-y-1">
-            {job.edl.sources.map((src, i) => (
-              <li key={i} className="text-xs flex gap-2">
-                <span className="font-mono text-neutral-500">[{i}]</span>
-                <span className="font-mono text-neutral-500">{src.role ?? "—"}</span>
-                <a
-                  className="underline truncate"
-                  href={`https://www.youtube.com/watch?v=${src.video_id}`}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  {src.title ?? src.video_id}
-                </a>
-                {src.channel ? (
-                  <span className="text-neutral-500">· {src.channel}</span>
-                ) : null}
-              </li>
-            ))}
+            {job.edl.sources.map((src, i) => {
+              const href =
+                src.page_url ??
+                (src.video_id?.startsWith("pexels-")
+                  ? `https://www.pexels.com/video/${src.video_id.replace("pexels-", "")}/`
+                  : `https://www.youtube.com/watch?v=${src.video_id}`);
+              return (
+                <li key={i} className="text-xs flex gap-2">
+                  <span className="font-mono text-neutral-500">[{i}]</span>
+                  <span className="font-mono text-neutral-500">{src.role ?? "—"}</span>
+                  <a
+                    className="underline truncate"
+                    href={href}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    {src.title ?? src.video_id}
+                  </a>
+                  {src.channel ? (
+                    <span className="text-neutral-500">· {src.channel}</span>
+                  ) : null}
+                </li>
+              );
+            })}
           </ol>
         </section>
       ) : null}
@@ -124,6 +139,11 @@ export default async function JobDetail({
             {job.edl.shots.map((s, i) => {
               const srcIdx = s.source_idx ?? 0;
               const showSrcLabel = (job.edl?.sources?.length ?? 1) > 1;
+              // For producer mode the source_start_sec is always 0 (each
+              // shot has its own short Pexels clip); showing "@ 0:00.0"
+              // for every shot is misleading. Render clip-style label
+              // instead, and only show a real timestamp when we're cutting
+              // into a longer source mid-video (commentary / synthesis).
               return (
                 <li
                   key={i}
@@ -132,11 +152,15 @@ export default async function JobDetail({
                   <div className="text-xs text-neutral-500 mb-1 flex gap-3">
                     <span>#{i + 1}</span>
                     {showSrcLabel ? (
-                      <span className="font-mono">src{srcIdx}</span>
+                      <span className="font-mono">
+                        {isProducer ? `clip ${srcIdx + 1}` : `src${srcIdx}`}
+                      </span>
                     ) : null}
-                    <span className="font-mono">
-                      @ {fmtTimestamp(s.source_start_sec)}
-                    </span>
+                    {!isProducer ? (
+                      <span className="font-mono">
+                        @ {fmtTimestamp(s.source_start_sec)}
+                      </span>
+                    ) : null}
                   </div>
                   <div className="text-sm">{s.narration}</div>
                   {s.purpose ? (

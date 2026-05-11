@@ -47,6 +47,7 @@ from pipeline.prompts import load_prompt
 from pipeline.profiles import fetch_profile
 from pipeline.claude_io import call_claude, extract_json
 from pipeline.pexels import PexelsClient, slugify_query
+from pipeline.exemplars import render_exemplars_block
 from pipeline import db
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -117,6 +118,7 @@ def _script(profile, topic: str, outline: dict) -> dict:
         if ch.get("must_include_disclaimer") and disc_zh
         else ""
     )
+    ref_bvids = ((ch.get("style_exemplars") or {}).get("ref_bvids") or [])
     prompt = tmpl.render(
         profile_block=block_render,
         channel_position=ch.get("channel_position") or "Chinese commentary channel",
@@ -127,6 +129,7 @@ def _script(profile, topic: str, outline: dict) -> dict:
         disclaimer_requirement=disclaimer_req,
         topic=topic,
         outline_block=json.dumps(outline, ensure_ascii=False, indent=2),
+        style_exemplars_block=render_exemplars_block(ref_bvids),
     )
     print(f"prompt: {tmpl.stamp} ({len(prompt)} chars)")
     raw = call_claude(prompt)

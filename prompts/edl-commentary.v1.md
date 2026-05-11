@@ -118,6 +118,9 @@ JSON schema:
 ================ PROFILE ================
 {profile_block}
 
+================ STYLE EXEMPLARS（如有，仅供学习钩子+节奏） ================
+{style_exemplars_block}
+
 ================ 源视频元数据 ================
 {sources_metadata}
 

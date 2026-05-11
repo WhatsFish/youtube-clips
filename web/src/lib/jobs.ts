@@ -12,6 +12,10 @@ export type EdlSource = {
   title?: string;
   channel?: string;
   role?: "primary" | "supplement";
+  // Phase 2 producer mode: explicit URL to the source's catalog page
+  // (e.g. https://www.pexels.com/video/...). When unset we fall back
+  // to assuming a YouTube id and synthesise the watch URL.
+  page_url?: string;
 };
 
 export type Edl = {
@@ -25,6 +29,10 @@ export type Edl = {
   // v4+: multi-source EDLs carry the full sources array; older single-
   // source EDLs only have the singular source_id below.
   sources?: EdlSource[];
+  // Phase 2 producer mode: marker so the web layer can render Pexels-
+  // stock semantics instead of YouTube-source semantics. Unset / "commentary"
+  // / "synthesis" all use the legacy YouTube path.
+  production_mode?: "commentary" | "synthesis" | "producer";
   prompt_template_version?: string;
   rendered_at?: string;
   topic_id?: number;

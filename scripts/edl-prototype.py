@@ -68,6 +68,7 @@ from pipeline.profiles import fetch_profile
 from pipeline.claude_io import call_claude, extract_json
 from pipeline.transcript import parse_vtt, format_transcript
 from pipeline.frames import sample_frames, DEFAULT_INTERVAL_SEC as FRAME_INTERVAL_SEC
+from pipeline.exemplars import render_exemplars_block
 from pipeline import db
 
 RAW_BASE = Path("/video/youtube-clips/raw")
@@ -230,6 +231,15 @@ def build_prompt_kwargs(profile, sources: list[SourceSpec]):
     primary_dur = _ffprobe_duration(primary.mp4)
     primary_entries = parse_vtt(primary.vtt) if primary.vtt else []
 
+    # Bilibili style exemplars — Profile-attached list of harvested
+    # reference videos to teach hook + rhythm patterns. Empty string
+    # when the Profile has no exemplars configured (commentary mode
+    # without curated refs, etc.) so the prompt template's
+    # `{style_exemplars_block}` placeholder cleanly degrades to a
+    # no-op section.
+    ref_bvids = ((ch.get("style_exemplars") or {}).get("ref_bvids") or [])
+    style_exemplars_block = render_exemplars_block(ref_bvids)
+
     return {
         "profile_block": profile.render_block(),
         "channel_position": channel_position,
@@ -244,6 +254,8 @@ def build_prompt_kwargs(profile, sources: list[SourceSpec]):
         # v2 analyze (vision-aware Stage 1)
         "frames_block": frames_block,
         "_any_frames": any_frames,  # consumed by main(), stripped before render
+        # Bilibili exemplars (commentary v1 / synthesis v1)
+        "style_exemplars_block": style_exemplars_block,
         # v3 (single-source legacy; harmless when v4 is active)
         "title": primary.title,
         "channel": primary.channel,
