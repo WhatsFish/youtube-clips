@@ -76,6 +76,7 @@ type Row = {
   edl_jsonb: Edl | null;
   shot_count: number;
   render_count: string;  // Postgres COUNT(*) returns a bigint; pg lib gives us a string
+  url_slug: string | null;  // producer mode stamps a readable slug; null for commentary/synthesis
 };
 
 // One render = one Output row. But re-running edl-render.py overwrites
@@ -96,6 +97,7 @@ const SELECT_RENDERS = `
       o.id              AS output_id,
       o.job_id          AS job_id,
       s.external_id     AS external_id,
+      j.edl_jsonb ->> 'url_slug' AS url_slug,
       p.name            AS profile_name,
       o.title           AS title,
       o.description     AS description,
@@ -109,11 +111,19 @@ const SELECT_RENDERS = `
       j.edl_jsonb       AS edl_jsonb,
       COALESCE(jsonb_array_length(j.edl_jsonb -> 'shots'), 0) AS shot_count,
       ROW_NUMBER() OVER (
-        PARTITION BY COALESCE(s.external_id, 'orphan-' || o.id::text), p.name
+        PARTITION BY COALESCE(
+          j.edl_jsonb ->> 'url_slug',
+          s.external_id,
+          'orphan-' || o.id::text
+        ), p.name
         ORDER BY o.ready_at DESC NULLS LAST, o.id DESC
       ) AS rn,
       COUNT(*) OVER (
-        PARTITION BY COALESCE(s.external_id, 'orphan-' || o.id::text), p.name
+        PARTITION BY COALESCE(
+          j.edl_jsonb ->> 'url_slug',
+          s.external_id,
+          'orphan-' || o.id::text
+        ), p.name
       ) AS render_count
     FROM outputs o
     JOIN jobs     j ON j.id = o.job_id
@@ -127,7 +137,10 @@ const SELECT_RENDERS = `
 
 function rowToJob(r: Row): Job {
   return {
-    id: r.external_id,
+    // URL routing key: producer mode stamps `url_slug` directly; older
+    // commentary/synthesis renders fall back to the source's external_id
+    // (which by convention is also the on-disk directory name).
+    id: r.url_slug || r.external_id,
     outputId: r.output_id,
     jobId: r.job_id,
     profileName: r.profile_name,
@@ -171,7 +184,7 @@ export async function loadJob(id: string): Promise<Job | null> {
   // than one Profile.
   const rows = await query<Row>(
     `${SELECT_RENDERS}
-     AND external_id = $1
+     AND ($1 IN (url_slug, external_id))
      ORDER BY ready_at DESC NULLS LAST
      LIMIT 1`,
     [id],

@@ -46,12 +46,39 @@ _MAX_SILENCE_GAP = 0.50
 _AGGRESSIVENESS = 2
 
 
+def _has_audio_stream(media: Path) -> bool:
+    """Return True iff ffprobe finds at least one audio stream in `media`.
+
+    Pexels stock B-roll routinely ships video-only (no audio track), and
+    ffmpeg's audio-extract pipeline fails with "Output file #0 does not
+    contain any stream" on those. We probe first so VAD can short-circuit
+    to "no speech" instead of crashing the whole render.
+    """
+    out = subprocess.run(
+        [
+            "ffprobe", "-v", "error",
+            "-select_streams", "a",
+            "-show_entries", "stream=codec_type",
+            "-of", "csv=p=0",
+            str(media),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    return out.returncode == 0 and "audio" in out.stdout
+
+
 def speech_intervals(audio_or_video: Path) -> list[tuple[float, float]]:
     """Return [(start_sec, end_sec)] for windows where the source is speaking.
 
     Accepts any file ffmpeg can read; we re-encode to a 16 kHz mono
     16-bit WAV in a temp file, run VAD over that, then drop the temp file.
+    Sources without an audio stream (common for Pexels stock B-roll) return
+    an empty list — the renderer treats that as "no speech anywhere," which
+    is the correct semantic for silent footage.
     """
+    if not _has_audio_stream(audio_or_video):
+        return []
     with tempfile.TemporaryDirectory() as td:
         wav = Path(td) / "vad.wav"
         subprocess.run(

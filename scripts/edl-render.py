@@ -38,7 +38,7 @@ import requests
 # Pipeline helpers live one level up.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from pipeline import db
-from pipeline.vad import speech_intervals
+from pipeline.vad import speech_intervals, _has_audio_stream
 from pipeline.bgm import pick_track
 
 RAW_BASE = Path("/video/youtube-clips/raw")
@@ -201,6 +201,7 @@ def render_shot(
     *,
     speech_intervals_global: list[tuple[float, float]] | None = None,
     tail_sec: float = 0.0,
+    source_has_audio: bool = True,
 ) -> None:
     """Render one shot to a self-contained mp4.
 
@@ -209,12 +210,15 @@ def render_shot(
     frame.
 
     Audio:
-      0..narr_dur:  source ducked via VAD envelope + narration @ NARR_VOL
-      narr_dur..end: source forced to AMBIENT (regardless of VAD), no
-                    narration. This is the "let the picture breathe"
-                    pause the EDL agent requested via pacing.inter_shot_pause_sec.
+      - `source_has_audio=True` (commentary / synthesis on YouTube
+        sources): mix source audio (ducked via VAD envelope, AMBIENT
+        during tail) with narration @ NARR_VOL.
+      - `source_has_audio=False` (producer mode on Pexels stock —
+        video-only files): no source audio mix; the only audio is
+        narration, then silence during the tail (BGM at the concat
+        layer will still fill the tail if mode != off).
 
-    A `tail_sec` of 0 collapses to v6 behaviour exactly.
+    A `tail_sec` of 0 collapses to pre-pacing-aware behaviour exactly.
     """
     duration = narr_dur + tail_sec
     available = max(0.0, source_total_dur - source_start)
@@ -228,21 +232,43 @@ def render_shot(
         f"setsar=1"
     )
 
-    # During narr_dur: VAD envelope. During tail_sec: forced AMBIENT.
-    # Compose: if(t < narr_dur, vad_expr, AMBIENT).
-    intervals = speech_intervals_global or []
-    vad_expr = _build_volume_expr(intervals, source_start, visual_take)
-    if tail_sec > 0:
-        vol_expr = f"if(lt(t,{narr_dur:.3f}),{vad_expr},{SOURCE_VOL_AMBIENT:.3f})"
-        bg_filter = f"[0:a]volume=volume='{vol_expr}':eval=frame[bg]"
+    # Pad audio to exactly `duration` (= narr_dur + tail_sec). Without
+    # this, audio ends at narration's end (and concat at -c copy treats
+    # the short audio frame as the shot's full audio length), so the
+    # next shot's audio "leaks" into the previous shot's tail —
+    # accumulating A/V drift across shots that the operator observed as
+    # "声音先出来，画面后切". apad with whole_dur extends the audio
+    # stream with silence up to exactly `duration`; -t duration then
+    # truncates so video and audio are guaranteed equal length.
+    apad = f"apad=whole_dur={duration:.3f}"
+    if source_has_audio:
+        intervals = speech_intervals_global or []
+        vad_expr = _build_volume_expr(intervals, source_start, visual_take)
+        if tail_sec > 0:
+            vol_expr = f"if(lt(t,{narr_dur:.3f}),{vad_expr},{SOURCE_VOL_AMBIENT:.3f})"
+            bg_filter = f"[0:a]volume=volume='{vol_expr}':eval=frame[bg]"
+        else:
+            vol_expr = vad_expr
+            bg_filter = (
+                f"[0:a]volume=volume='{vol_expr}':eval=frame[bg]"
+                if "if(" in vol_expr
+                else f"[0:a]volume={vol_expr}[bg]"
+            )
+        filter_complex = (
+            f"[0:v]{vf}[v];"
+            f"{bg_filter};"
+            f"[1:a]volume={NARR_VOL}[fg];"
+            f"[bg][fg]amix=inputs=2:duration=longest:dropout_transition=0,"
+            f"{apad},aresample=48000[a]"
+        )
     else:
-        # Pre-pacing-aware shape; keep the simpler filter when the agent
-        # didn't ask for breathing room (e.g. dense finance content).
-        vol_expr = vad_expr
-        bg_filter = (
-            f"[0:a]volume=volume='{vol_expr}':eval=frame[bg]"
-            if "if(" in vol_expr
-            else f"[0:a]volume={vol_expr}[bg]"
+        # No source audio (typical Pexels stock). Narration alone, padded
+        # with silence to span the full shot duration so the post-tail
+        # silence is real silence frames — not "missing audio" that
+        # concat treats as a shorter shot.
+        filter_complex = (
+            f"[0:v]{vf}[v];"
+            f"[1:a]volume={NARR_VOL},{apad},aresample=48000[a]"
         )
 
     cmd = [
@@ -251,10 +277,7 @@ def render_shot(
         "-i", str(source),
         "-i", str(narration_audio),
         "-filter_complex",
-        f"[0:v]{vf}[v];"
-        f"{bg_filter};"
-        f"[1:a]volume={NARR_VOL}[fg];"
-        f"[bg][fg]amix=inputs=2:duration=longest:dropout_transition=0,aresample=48000[a]",
+        filter_complex,
         "-map", "[v]", "-map", "[a]",
         "-t", f"{duration:.3f}",
         *VIDEO_ARGS, *AUDIO_ARGS,
@@ -563,12 +586,15 @@ def main() -> int:
     # Resolve sources. v4 EDLs carry an explicit `sources[]`; pre-v4
     # single-source EDLs only have shots[*].source_start_sec and the
     # implicit assumption that the source mp4 lives at RAW_BASE/<arg>.
+    # Producer-mode EDLs (Phase 2) carry sources[i].path pointing at
+    # locally-downloaded Pexels stock clips — when present, that path
+    # is authoritative and overrides the RAW_BASE convention.
     sources_meta = edl.get("sources")
     if sources_meta:
         source_paths: list[Path] = []
         source_durs: list[float] = []
         for i, s in enumerate(sources_meta):
-            sp = RAW_BASE / s["video_id"] / "source.mp4"
+            sp = Path(s["path"]) if s.get("path") else (RAW_BASE / s["video_id"] / "source.mp4")
             if not sp.exists():
                 sys.exit(f"missing source mp4 for source_idx={i}: {sp}")
             source_paths.append(sp)
@@ -582,11 +608,19 @@ def main() -> int:
         source_durs = [ffprobe_duration(sp)]
         print(f"sources: 1 (legacy single-source EDL, video_id={args.video_id})")
 
-    # Pre-compute VAD on each source mp4 once. Each shot derives its own
-    # local volume envelope from the global speech intervals; running VAD
-    # per-shot would re-decode the same audio many times.
+    # Pre-compute, for each source: (a) whether it has an audio track at
+    # all, and (b) VAD speech intervals if so. Pexels stock clips usually
+    # ship video-only — VAD short-circuits to [] for those, and the
+    # per-shot render skips the source-audio mix entirely.
     source_speech: list[list[tuple[float, float]]] = []
+    source_has_audio: list[bool] = []
     for i, sp in enumerate(source_paths):
+        has_aud = _has_audio_stream(sp)
+        source_has_audio.append(has_aud)
+        if not has_aud:
+            print(f"  src{i}: no audio stream (Pexels stock?) — skipping VAD")
+            source_speech.append([])
+            continue
         label = stage(f"vad src{i}")
         ivs = speech_intervals(sp)
         speech_total = sum(e - s for s, e in ivs)
@@ -654,6 +688,7 @@ def main() -> int:
             shot_mp4,
             source_durs[src_idx],
             speech_intervals_global=source_speech[src_idx],
+            source_has_audio=source_has_audio[src_idx],
             tail_sec=tail,
         )
         done(label)
