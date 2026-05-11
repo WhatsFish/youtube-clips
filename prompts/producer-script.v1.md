@@ -32,9 +32,23 @@ notes: |
 
 ## 与 commentary/synthesis 的关键区别
 
-- **没有源视频**：每个 shot 没有 source_start_sec / source_idx 概念。每个 clip 是独立 Pexels 素材，从 0s 起播
+- **没有源视频**：每个 shot 没有 source_start_sec / source_idx 概念。每个 clip 是独立素材，从 0s 起播
 - **不要捏造具体事实**：通识表达，没有源转录可以引用
-- **visual_brief 是硬约束**：写的画面**必须是库存视频网站能搜到的具体场景**。抽象概念转成可视化（"焦虑感" → "young woman looking worried at her phone in dim room"）
+- **visual_brief 是硬约束**：写的画面**必须是可以被取到 / 被生成的具体场景**。抽象概念转成可视化（"焦虑感" → "young woman looking worried at her phone in dim room"）
+
+## 每个 shot 决定素材来源（asset_strategy）
+
+每个 shot 给一个素材策略：
+- `"pexels"`（默认 / 大多数）—— Pexels 库存视频。**优点**：免费、即时、画质稳定。**缺点**：偏西方审美，中文文化具体场景（县城 / 春运 / 中式厨房 / 街边摊 / 城中村）找不到对的
+- `"ai"`（视情况）—— Doubao Seedance 文生视频。**优点**：可以生成任何具体场景，中文文化场景训练充足，能可视化抽象概念。**缺点**：每次约 60 秒生成时间 + 单次 ¥1-2 成本
+
+**判断规则**：
+- 通用场景（hands typing / city skyline / office / nature / cooking generic）→ `pexels`
+- 中国文化具体场景（chinese county town / 春运 train station / chinese street food / chinese small apartment）→ `ai`
+- 抽象 / 隐喻 / 不可拍场景（futuristic data flow / metaphorical concept）→ `ai`
+- 找不准的就走 `pexels`，render 时如果 Pexels 也没匹配会有兜底
+
+**默认偏好 pexels**。只有当具体场景明显是 Pexels 不擅长的时候才标 `ai`。整支视频里 `ai` 占比建议 **0-30%**，不要全 AI。
 
 ## 写作约束
 
@@ -102,6 +116,7 @@ JSON schema:
     {{
       "narration": "本 shot 的解说",
       "visual_brief_en": "5-10 个英文关键词描述需要的画面",
+      "asset_strategy": "pexels" | "ai",
       "outline_ref": "对应 OUTLINE.outline 数组的索引（0-based）",
       "purpose": "选这段画面的原因，一句话"
     }}

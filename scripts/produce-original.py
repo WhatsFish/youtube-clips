@@ -47,6 +47,7 @@ from pipeline.prompts import load_prompt
 from pipeline.profiles import fetch_profile
 from pipeline.claude_io import call_claude, extract_json
 from pipeline.pexels import PexelsClient, slugify_query
+from pipeline.volcengine import VolcengineClient
 from pipeline.exemplars import render_exemplars_block
 from pipeline import db
 
@@ -79,7 +80,16 @@ def _stage(name: str):
     print(f"\n──── {name} {'─' * (54 - len(name))}", flush=True)
 
 
-def _outline(profile, topic: str) -> dict:
+def _save_raw(job_dir: Path, name: str, raw: str) -> None:
+    """Persist the raw Claude output so a failed JSON parse can be
+    inspected after the fact (Claude is stochastic — the same prompt
+    re-run typically succeeds, but the original failure mode is lost
+    if we don't capture it)."""
+    job_dir.mkdir(parents=True, exist_ok=True)
+    (job_dir / name).write_text(raw, encoding="utf-8")
+
+
+def _outline(profile, topic: str, job_dir: Path) -> dict:
     tmpl = load_prompt("producer-outline", version="latest")
     block_render = profile.render_block()
     cfg = profile.config or {}
@@ -94,11 +104,12 @@ def _outline(profile, topic: str) -> dict:
     )
     print(f"prompt: {tmpl.stamp} ({len(prompt)} chars)")
     raw = call_claude(prompt)
+    _save_raw(job_dir, "outline.raw-claude.txt", raw)
     data = extract_json(raw)
     return data
 
 
-def _script(profile, topic: str, outline: dict) -> dict:
+def _script(profile, topic: str, outline: dict, job_dir: Path) -> dict:
     tmpl = load_prompt("producer-script", version="latest")
     block_render = profile.render_block()
     cfg = profile.config or {}
@@ -133,19 +144,91 @@ def _script(profile, topic: str, outline: dict) -> dict:
     )
     print(f"prompt: {tmpl.stamp} ({len(prompt)} chars)")
     raw = call_claude(prompt)
+    _save_raw(job_dir, "script.raw-claude.txt", raw)
     return extract_json(raw)
+
+
+def _acquire_one_pexels(
+    sh: dict,
+    i: int,
+    query: str,
+    assets_dir: Path,
+    pexels: PexelsClient,
+) -> dict:
+    """Try Pexels for this shot. Caller decided this is a Pexels-tier
+    shot via asset_strategy. Returns a sources[] entry."""
+    est_narr_sec = max(4, math.ceil(len(sh["narration"]) / CHARS_PER_SEC) + 1)
+    videos = pexels.search(query, per_page=PEXELS_PER_PAGE, min_duration=est_narr_sec)
+    if not videos:
+        videos = pexels.search(query, per_page=PEXELS_PER_PAGE, min_duration=2)
+    if not videos:
+        sys.exit(
+            f"shot {i}: pexels returned no candidates for query={query!r}. "
+            f"Try a more concrete English visual_brief_en or asset_strategy='ai'."
+        )
+    pick = videos[0]
+    target = assets_dir / f"clip-{i:02d}-pexels-{slugify_query(query)}.mp4"
+    print(f"  s{i:02d} pexels:{pick.id} ({pick.duration_sec}s) ← {query!r}")
+    pexels.download(pick, target)
+    return {
+        "video_id": f"pexels-{pick.id}",
+        "title": query,
+        "channel": "Pexels stock",
+        "role": "primary" if i == 0 else "supplement",
+        "path": str(target),
+        "duration_sec": pick.duration_sec,
+        "page_url": pick.page_url,
+        "asset_strategy": "pexels",
+    }
+
+
+def _acquire_one_ai(
+    sh: dict,
+    i: int,
+    query: str,
+    assets_dir: Path,
+    volc: VolcengineClient,
+) -> dict:
+    """Generate this shot's clip via Doubao Seedance. Use 10s default —
+    most narration lines fit under that, and longer means more flexibility
+    for tpad-free playback.
+    """
+    target = assets_dir / f"clip-{i:02d}-ai-{slugify_query(query)}.mp4"
+    print(f"  s{i:02d} doubao generating ({query!r}) — this takes ~60s...")
+    t0 = time.monotonic()
+    result = volc.generate(query, target, duration_sec=10, resolution="720p")
+    print(
+        f"  s{i:02d} doubao:{result.task_id} ({result.duration_sec:.0f}s clip) "
+        f"in {time.monotonic()-t0:.0f}s wall"
+    )
+    return {
+        "video_id": f"doubao-{result.task_id}",
+        "title": query,
+        "channel": "Doubao Seedance",
+        "role": "primary" if i == 0 else "supplement",
+        "path": str(target),
+        "duration_sec": result.duration_sec,
+        "page_url": None,
+        "asset_strategy": "ai",
+    }
 
 
 def _acquire_assets(
     shots: list[dict],
     assets_dir: Path,
     pexels: PexelsClient,
+    volc: VolcengineClient | None,
+    *,
+    global_strategy: str = "hybrid",
 ) -> list[dict]:
-    """For each shot, search Pexels and download a matching clip.
+    """Route each shot to Pexels or AI generation based on the agent's
+    per-shot `asset_strategy` (and the global override).
 
-    Returns a list of source dicts (one per shot — i.e. one source per
-    shot, single-use) for the EDL's `sources` array. Each shot's
-    source_idx will be its own list index; source_start_sec stays 0.
+    `global_strategy`:
+      - `pexels`  → force all shots to Pexels regardless of what agent picked
+      - `ai`      → force all shots through Doubao (expensive; use only when
+                    debugging AI tier or doing a fully-AI sample render)
+      - `hybrid`  → respect each shot's `asset_strategy` (default)
     """
     assets_dir.mkdir(parents=True, exist_ok=True)
     sources: list[dict] = []
@@ -153,35 +236,24 @@ def _acquire_assets(
         query = (sh.get("visual_brief_en") or "").strip()
         if not query:
             sys.exit(f"shot {i}: missing visual_brief_en")
-        # Estimate the narration length so we don't pick a clip shorter
-        # than the line will need; +1s safety margin lets tpad have a
-        # tiny bit to clone from.
-        est_narr_sec = max(4, math.ceil(len(sh["narration"]) / CHARS_PER_SEC) + 1)
-
-        videos = pexels.search(query, per_page=PEXELS_PER_PAGE, min_duration=est_narr_sec)
-        if not videos:
-            # Fallback: relax the duration constraint. Better to play
-            # a too-short clip (tpad will freeze the last frame) than
-            # to fail the whole produce.
-            videos = pexels.search(query, per_page=PEXELS_PER_PAGE, min_duration=2)
-        if not videos:
-            sys.exit(
-                f"shot {i}: pexels returned no candidates for query={query!r}. "
-                f"Try a more concrete English visual_brief_en."
-            )
-        pick = videos[0]
-        target = assets_dir / f"clip-{i:02d}-{slugify_query(query)}.mp4"
-        print(f"  s{i:02d} pexels:{pick.id} ({pick.duration_sec}s) ← {query!r}")
-        pexels.download(pick, target)
-        sources.append({
-            "video_id": f"pexels-{pick.id}",
-            "title": query,
-            "channel": "Pexels stock",
-            "role": "primary" if i == 0 else "supplement",
-            "path": str(target),
-            "duration_sec": pick.duration_sec,
-            "page_url": pick.page_url,
-        })
+        shot_strategy = (sh.get("asset_strategy") or "pexels").lower()
+        if global_strategy == "pexels":
+            chosen = "pexels"
+        elif global_strategy == "ai":
+            chosen = "ai"
+        else:  # hybrid
+            chosen = shot_strategy
+        if chosen == "ai":
+            if volc is None:
+                print(
+                    f"  s{i:02d} agent asked for AI but VOLC_ARK_API_KEY not set — "
+                    f"falling back to pexels"
+                )
+                sources.append(_acquire_one_pexels(sh, i, query, assets_dir, pexels))
+            else:
+                sources.append(_acquire_one_ai(sh, i, query, assets_dir, volc))
+        else:
+            sources.append(_acquire_one_pexels(sh, i, query, assets_dir, pexels))
     return sources
 
 
@@ -189,6 +261,16 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--topic", required=True, help="What this video is about")
     ap.add_argument("--profile", required=True, help="Profile name (must be production_mode=producer)")
+    ap.add_argument(
+        "--asset-strategy",
+        choices=["pexels", "ai", "hybrid"],
+        default="hybrid",
+        help=(
+            "How to source per-shot visuals. 'hybrid' (default) respects "
+            "the per-shot strategy the script agent chose. 'pexels' forces "
+            "all-stock. 'ai' forces all-Doubao (expensive, ~¥1-2 per 5s)."
+        ),
+    )
     args = ap.parse_args()
 
     overall_t0 = time.monotonic()
@@ -211,7 +293,7 @@ def main() -> int:
 
     # 1. Outline.
     _stage("outline")
-    outline = _outline(profile, args.topic)
+    outline = _outline(profile, args.topic, job_dir)
     (job_dir / "outline.json").write_text(
         json.dumps(outline, ensure_ascii=False, indent=2), encoding="utf-8"
     )
@@ -223,7 +305,7 @@ def main() -> int:
 
     # 2. Script.
     _stage("script")
-    script = _script(profile, args.topic, outline)
+    script = _script(profile, args.topic, outline, job_dir)
     (job_dir / "script.json").write_text(
         json.dumps(script, ensure_ascii=False, indent=2), encoding="utf-8"
     )
@@ -235,10 +317,23 @@ def main() -> int:
         sys.exit("script returned no shots")
     print(f"shots: {len(shots)}")
 
-    # 3. Acquire assets — one Pexels clip per shot.
-    _stage("pexels")
+    # 3. Acquire assets — Pexels stock and/or Doubao AI per the agent's
+    #    per-shot decision (overridable via --asset-strategy).
+    _stage(f"assets ({args.asset_strategy})")
     pexels = PexelsClient.from_env()
-    sources = _acquire_assets(shots, assets_dir, pexels)
+    try:
+        volc = VolcengineClient()
+    except RuntimeError as e:
+        # AI key missing — that's fine if the strategy doesn't need it.
+        # If hybrid and any shot asked for AI, _acquire_assets falls
+        # back to pexels per-shot (and warns).
+        if args.asset_strategy == "ai":
+            sys.exit(f"--asset-strategy ai requires VOLC_ARK_API_KEY: {e}")
+        volc = None
+    sources = _acquire_assets(
+        shots, assets_dir, pexels, volc,
+        global_strategy=args.asset_strategy,
+    )
 
     # 4. Assemble EDL. Each shot points at its own freshly-downloaded
     # clip via source_idx; source_start_sec stays 0 (each clip plays
