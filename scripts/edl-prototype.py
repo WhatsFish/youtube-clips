@@ -360,14 +360,32 @@ def main() -> int:
                 paths = sample_frames(s.mp4, frames_dir, interval_sec=FRAME_INTERVAL_SEC)
                 print(f"  [{s.video_id}] extracted {len(paths)} frames")
 
-    # Load Profile + prompt template.
+    # Load Profile + Stage-2 prompt template.
+    # The prompt name is chosen by the Profile's `channel.production_mode`:
+    #   commentary  → edl-commentary  (vlog / observation / cultural take)
+    #   synthesis   → edl-synthesis   (analysis / thesis / data-heavy)
+    # Older Profiles without the field default to `edl-continuous` (v8),
+    # which still works as the catch-all single-prompt path.
     profile = fetch_profile(args.profile)
     print(f"profile: {profile.name} (id={profile.id}, active={profile.active})")
+    mode = (
+        ((profile.config or {}).get("channel") or {}).get("production_mode")
+        or "legacy"
+    )
+    prompt_name_by_mode = {
+        "commentary": "edl-commentary",
+        "synthesis": "edl-synthesis",
+        "legacy": "edl-continuous",
+    }
+    prompt_name = prompt_name_by_mode.get(mode, "edl-continuous")
     pv = args.prompt_version
     prompt_tmpl = load_prompt(
-        "edl-continuous", version=int(pv) if pv != "latest" else "latest"
+        prompt_name, version=int(pv) if pv != "latest" else "latest"
     )
-    print(f"prompt:  {prompt_tmpl.stamp}  ({prompt_tmpl.source_path.name})")
+    print(
+        f"prompt:  {prompt_tmpl.stamp}  ({prompt_tmpl.source_path.name})  "
+        f"[mode={mode}]"
+    )
 
     # Output dir is keyed off the primary source.
     job_dir = OUT_BASE / primary.video_id
@@ -376,15 +394,16 @@ def main() -> int:
     base_kwargs = build_prompt_kwargs(profile, sources)
     any_frames = base_kwargs.pop("_any_frames", False)
 
-    # ---- Stage 1 (analyze) — only when the active edl-continuous prompt is v5+
-    # The single-pass v3/v4 templates have no analysis_block placeholder, so
-    # we skip the extra Claude call when the operator explicitly downgrades
-    # via --prompt-version 4. Two-stage adds ~60s of wall-clock + one extra
-    # Claude billing call but yields markedly deeper writeups on dense
-    # tech / finance topics; for vlog content the lift is smaller but the
-    # output stays coherent because Stage 2 still owns the channel voice.
+    # ---- Stage 1 (analyze) — fires whenever the Stage-2 template references
+    # `{analysis_block}`. That makes the dispatch insensitive to prompt name:
+    # edl-continuous v3/v4 (no analysis_block, single-pass) skip Stage 1;
+    # edl-continuous v5+, edl-commentary, edl-synthesis (all reference
+    # analysis_block) all run Stage 1. Two-stage adds ~60s of wall-clock +
+    # one extra Claude call but yields markedly deeper writeups on dense
+    # tech/finance, and is also where the new commentary/synthesis split
+    # plugs in.
     analysis: dict | None = None
-    if prompt_tmpl.version >= 5:
+    if "{analysis_block}" in prompt_tmpl.body:
         # Pick the analyze prompt: v2 (vision-aware, requires Read tool +
         # add-dir for the frames) when any source needs frame inspection,
         # else the cheaper text-only v1.

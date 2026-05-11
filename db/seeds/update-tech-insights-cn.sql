@@ -43,6 +43,7 @@ SET
     },
     "channel": {
       "channel_position": "Bilibili 科技频道 UP 主",
+      "production_mode": "synthesis",
       "tone": "年轻、专业、有态度，可以有 mild hot take",
       "vocabulary": "技术术语直接用，不需要每个名词都解释",
       "verbal_tics": ["划重点", "反常识的是", "这就有意思了", "值得注意的是"],

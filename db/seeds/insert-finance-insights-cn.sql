@@ -43,6 +43,7 @@ VALUES (
     },
     "channel": {
       "channel_position": "面向中文受众的 Bilibili 财经 / 宏观频道",
+      "production_mode": "synthesis",
       "tone": "克制、有依据、敢下判断但不煽动；不给买卖建议，永远是 decision support 不是 advice",
       "vocabulary": "金融术语直接用（CPI / 美债 / 久期 / 风险溢价 / 加息周期），不解释每个名词；数字必须给出且明确单位",
       "verbal_tics": ["关键变量是", "需要看一眼", "风险点在于", "市场在 price in 的是", "把账算清楚"],

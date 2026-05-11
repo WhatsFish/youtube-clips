@@ -498,8 +498,19 @@ def write_ass_subs(
     out_path.write_text(header + "\n".join(events) + "\n", encoding="utf-8")
 
 
+# Final fade-out length on the entire concat — gives the video a clean
+# audible "we're done" beat. Applied in burn_subs since that's the only
+# pass guaranteed to run on every render (BGM mix is conditional).
+FINAL_FADE_OUT_SEC = 1.5
+
+
 def burn_subs(in_path: Path, ass_path: Path, out_path: Path) -> None:
     """Re-encode `in_path` with `ass_path` baked in, write to `out_path`.
+
+    Also applies an audio fade-out over the last `FINAL_FADE_OUT_SEC`
+    seconds so the render ends with a proper outro beat instead of
+    cutting on a syllable. The audio re-encode is cheap (AAC, just a
+    short tail) and consistent across BGM-on / BGM-off paths.
 
     Uses ffmpeg's libass-backed `subtitles` filter. The path is passed
     through filter-graph quoting, which means single quotes wrap and
@@ -510,14 +521,19 @@ def burn_subs(in_path: Path, ass_path: Path, out_path: Path) -> None:
     """
     sp = str(ass_path)
     assert ":" not in sp and "'" not in sp and "\\" not in sp, sp
+    in_dur = ffprobe_duration(in_path)
+    fade_dur = min(FINAL_FADE_OUT_SEC, max(0.5, in_dur * 0.1))
+    fade_start = max(0.0, in_dur - fade_dur)
     cmd = [
         "ffmpeg", "-y", "-loglevel", "error",
         "-i", str(in_path),
         "-vf", f"subtitles={sp}",
-        # Keep audio passthrough; only video re-encodes.
+        "-af", f"afade=t=out:st={fade_start:.3f}:d={fade_dur:.3f}",
         "-c:v", "libx264", "-preset", "fast", "-crf", "23",
         "-pix_fmt", "yuv420p",
-        "-c:a", "copy",
+        # AAC re-encode for the fade — fade filter requires PCM internally
+        # and we're paying the audio re-encode cost here once.
+        "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2",
         str(out_path),
     ]
     subprocess.run(cmd, check=True)
@@ -616,10 +632,13 @@ def main() -> int:
         narr_dur = ffprobe_duration(narr_audio)
         done(label)
 
-        # Last shot: no trailing pause. Putting silence at the very end
-        # would feel like the video stalled; let the final shot end on
-        # the narration's last word.
-        tail = inter_shot_pause if i < len(shots) - 1 else 0.0
+        # Every shot — including the last — gets the trailing pause.
+        # Earlier we suppressed it on the final shot fearing the video
+        # would feel stalled; in practice the operator reported the
+        # opposite ("结束得有点突兀"), and a clean tail + audio fade-out
+        # at the very end gives a proper "video's over" beat instead of
+        # cutting on a syllable.
+        tail = inter_shot_pause
         shot_dur = narr_dur + tail
 
         label = stage(

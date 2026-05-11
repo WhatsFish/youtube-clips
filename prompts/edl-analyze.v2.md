@@ -52,8 +52,9 @@ notes: |
 - claim 用陈述句，"事实概括"层面
 - evidence 字段：
   - `mode=transcript` 源：`quote_en` 引源字幕原句、`approx_sec` 取字幕里出现的时间戳
-  - `mode=frames` 源：`quote_en` 改成对那帧画面内容的**英文一句描述**（你在 Read 时看到了什么）；`approx_sec` 用帧采样间隔推算（frame-NNN 对应 (NNN-1)*30 秒，间隔由元数据给出）
+  - `mode=frames` 源：`quote_en` 改成对那帧画面内容的**英文一句描述**（你在 Read 时看到了什么）；`approx_sec` 用帧采样间隔推算（frame-NNN 对应 (NNN-1)*N 秒，间隔由元数据给出）
   - `mode=both` 源：优先用字幕原句，画面只在补充关键视觉信息时引用
+- **画面 evidence 100% 确定原则**：`quote_en` 只写**你 Read 那帧时清楚看到、能指认出来的具体物体 / 动作 / 文字**。**模糊的、可能是的、推测的全部不写**——Stage 2 会把你的 evidence 当事实直接编进 narration，错认一个物体就是观众一眼能挑出来的破绽。如果某个 insight 你只能从语境推断、没有明确画面支撑，**降级 narrative_role 或者干脆删掉**，宁少勿错。
 - 5 个 insight 是 5 个角度，不重复
 
 只输出一个 JSON，包在 ```json ... ``` 代码块里。其它任何说明文字都不要。
