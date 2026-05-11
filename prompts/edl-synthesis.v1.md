@@ -76,6 +76,20 @@ notes: |
 - `mode = "dynamic"`：少数情况——源视频本身有大段画面/无人声段。
 - `mode = "constant"`：很少。如果用，限定 `tense` / `neutral` mood，绝不要 upbeat。
 
+## 声音决策（必填）
+
+如果 PROFILE.output.tts_voice 已写死，**照搬**——一个频道保持一个声音稳定品牌。
+如果 PROFILE.output.tts_voice 是空 / null，根据频道定位挑：
+
+| 声音 | 适合 |
+|---|---|
+| `zh-CN-YunyangNeural` | 成熟新闻播报男声，财经/严肃社会评论权威感（synthesis 默认推荐） |
+| `zh-CN-YunzeNeural` | 中年沉稳男声，editorial 深度 |
+| `zh-CN-YunjianNeural` | 解说员男声，有激情，悬念向 |
+| `zh-CN-YunxiNeural` | 年轻男声，科技向轻一点 |
+
+rate_pct: 严肃 0-5、自然 5-8。**synthesis 一般不要超过 10**。
+
 ## 输出 JSON
 
 只输出一个 JSON，包在 ```json ... ``` 代码块里。其它任何说明文字都不要。
@@ -101,6 +115,8 @@ JSON schema:
     "mood": "upbeat" | "calm" | "tense" | "neutral",
     "reason_zh": "一句中文"
   }},
+  "voice": "zh-CN-YunyangNeural",
+  "rate_pct": 5,
   "shots": [
     {{
       "narration": "本 shot 的解说",

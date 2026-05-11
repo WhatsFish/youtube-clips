@@ -80,6 +80,22 @@ notes: |
 
 mood: `upbeat` / `calm` / `tense` / `neutral`。
 
+## 声音决策（必填）
+
+如果 PROFILE.output.tts_voice 已写死，**照搬**——一个频道保持一个声音稳定品牌。
+如果 PROFILE.output.tts_voice 是空 / null，根据频道定位挑：
+
+| 声音 | 人格 | 适合 |
+|---|---|---|
+| `zh-CN-XiaoxiaoNeural` | 温暖友好女声 | 亲切观察、生活向、邻家感 |
+| `zh-CN-XiaoyiNeural` | 年轻活泼女声 | punchy 节奏、综艺感 |
+| `zh-CN-YunxiNeural` | 年轻男声 | 轻松科技、年轻向 |
+| `zh-CN-YunjianNeural` | 解说员男声 | 悬念、冷知识 |
+| `zh-CN-YunyangNeural` | 成熟新闻播报男声 | 严肃社会评论 |
+| `zh-CN-YunzeNeural` | 中年沉稳男声 | editorial 深度 |
+
+rate_pct: editorial 0-5、自然 5-10、轻松 10-15。
+
 ## 输出 JSON
 
 只输出一个 JSON，包在 ```json ... ``` 代码块里。其它任何说明文字都不要。
@@ -104,6 +120,8 @@ JSON schema:
     "mood": "upbeat" | "calm" | "tense" | "neutral",
     "reason_zh": "一句中文"
   }},
+  "voice": "zh-CN-XiaoxiaoNeural",
+  "rate_pct": 8,
   "shots": [
     {{
       "narration": "本 shot 的解说",
