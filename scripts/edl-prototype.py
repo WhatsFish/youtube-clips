@@ -380,30 +380,29 @@ def main() -> int:
                 print(f"  [{s.video_id}] extracted {len(paths)} frames")
 
     # Load Profile + Stage-2 prompt template.
-    # The prompt name is chosen by the Profile's `channel.production_mode`:
-    #   commentary  → edl-commentary  (vlog / observation / cultural take)
-    #   synthesis   → edl-synthesis   (analysis / thesis / data-heavy)
-    # Older Profiles without the field default to `edl-continuous` (v8),
-    # which still works as the catch-all single-prompt path.
+    # The prompt name is chosen in this order:
+    #   1. Profile.channel.prompt_name (explicit per-channel override; for
+    #      channels whose brief diverges from the shared default).
+    #   2. Profile.channel.production_mode → mode-default mapping below.
+    #   3. legacy `edl-continuous` (v8) catch-all for very old Profiles.
     profile = fetch_profile(args.profile)
     print(f"profile: {profile.name} (id={profile.id}, active={profile.active})")
-    mode = (
-        ((profile.config or {}).get("channel") or {}).get("production_mode")
-        or "legacy"
-    )
+    channel_cfg = (profile.config or {}).get("channel") or {}
+    mode = channel_cfg.get("production_mode") or "legacy"
+    custom_prompt = channel_cfg.get("prompt_name")
     prompt_name_by_mode = {
         "commentary": "edl-commentary",
         "synthesis": "edl-synthesis",
         "legacy": "edl-continuous",
     }
-    prompt_name = prompt_name_by_mode.get(mode, "edl-continuous")
+    prompt_name = custom_prompt or prompt_name_by_mode.get(mode, "edl-continuous")
     pv = args.prompt_version
     prompt_tmpl = load_prompt(
         prompt_name, version=int(pv) if pv != "latest" else "latest"
     )
     print(
         f"prompt:  {prompt_tmpl.stamp}  ({prompt_tmpl.source_path.name})  "
-        f"[mode={mode}]"
+        f"[mode={mode}{', custom' if custom_prompt else ''}]"
     )
 
     # Output dir is keyed off the primary source.

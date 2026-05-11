@@ -90,7 +90,11 @@ def _save_raw(job_dir: Path, name: str, raw: str) -> None:
 
 
 def _outline(profile, topic: str, job_dir: Path) -> dict:
-    tmpl = load_prompt("producer-outline", version="latest")
+    # Profile-level override: channel.outline_prompt_name lets a channel
+    # use a brief-specific outline template; falls back to default.
+    cfg = (profile.config or {}).get("channel") or {}
+    name = cfg.get("outline_prompt_name") or "producer-outline"
+    tmpl = load_prompt(name, version="latest")
     block_render = profile.render_block()
     cfg = profile.config or {}
     ch = cfg.get("channel") or {}
@@ -110,7 +114,11 @@ def _outline(profile, topic: str, job_dir: Path) -> dict:
 
 
 def _script(profile, topic: str, outline: dict, job_dir: Path) -> dict:
-    tmpl = load_prompt("producer-script", version="latest")
+    # Profile-level override: channel.script_prompt_name (alias prompt_name)
+    # lets a channel use a brief-specific script template; falls back to default.
+    cfg = (profile.config or {}).get("channel") or {}
+    name = cfg.get("script_prompt_name") or cfg.get("prompt_name") or "producer-script"
+    tmpl = load_prompt(name, version="latest")
     block_render = profile.render_block()
     cfg = profile.config or {}
     ch = cfg.get("channel") or {}
