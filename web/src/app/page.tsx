@@ -7,7 +7,7 @@ import {
   fmtTime,
   type Job,
 } from "@/lib/jobs";
-import { listActiveRuns, listRecentFailures } from "@/lib/runs";
+import { listActiveRuns, listRecentFailures, loadRecentCost } from "@/lib/runs";
 import ActiveRunsLive from "@/components/ActiveRunsLive";
 
 export const dynamic = "force-dynamic";
@@ -44,10 +44,11 @@ export default async function Home() {
     dbError = e instanceof Error ? e.message : String(e);
   }
 
-  const [jobs, activeRuns, recentFailures] = await Promise.all([
+  const [jobs, activeRuns, recentFailures, recentCost] = await Promise.all([
     listJobs(),
     listActiveRuns(),
     listRecentFailures(5),
+    loadRecentCost(24),
   ]);
   const jobsByProfile = groupByProfile(jobs);
 
@@ -59,12 +60,26 @@ export default async function Home() {
   return (
     <main className="max-w-3xl mx-auto px-5 py-12">
       <header className="mb-10">
-        <h1 className="text-2xl font-semibold tracking-tight mb-1">
-          youtube-clips
-        </h1>
-        <p className="text-sm text-neutral-500">
-          Profile-based multi-platform video remix pipeline.
-        </p>
+        <div className="flex items-baseline justify-between gap-4 flex-wrap">
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight mb-1">
+              youtube-clips
+            </h1>
+            <p className="text-sm text-neutral-500">
+              Profile-based multi-platform video remix pipeline.
+            </p>
+          </div>
+          {recentCost.doubaoCalls > 0 && (
+            <div className="text-xs text-neutral-500 text-right">
+              <div className="uppercase tracking-wider">
+                24h Doubao 花费
+              </div>
+              <div className="font-mono text-neutral-700 dark:text-neutral-300">
+                ${recentCost.doubaoUsd.toFixed(2)} · {recentCost.doubaoCalls} 调用
+              </div>
+            </div>
+          )}
+        </div>
       </header>
 
       {dbError ? (

@@ -1,8 +1,74 @@
-import { query } from "./db";
+import { query, costQuery } from "./db";
 import type { Run, RunEvent, RunStatus, EventStatus } from "./runs-shared";
 
 export type { Run, RunEvent, RunStatus, EventStatus } from "./runs-shared";
 export { stageLabel } from "./runs-shared";
+
+export type RunCost = {
+  doubaoUsd: number;
+  doubaoCalls: number;
+  doubaoSeconds: number;
+};
+
+/** Aggregate Doubao spend across the trailing window. Used on the home page. */
+export async function loadRecentCost(hours = 24): Promise<RunCost> {
+  try {
+    const rows = await costQuery<{
+      doubao_usd: string | null;
+      doubao_calls: string;
+      doubao_seconds: string | null;
+    }>(
+      `SELECT
+         COALESCE(SUM(cost_usd), 0)::text AS doubao_usd,
+         COUNT(*)::text                   AS doubao_calls,
+         COALESCE(SUM((metadata->>'duration_sec')::numeric), 0)::text AS doubao_seconds
+       FROM cost_event
+       WHERE service = 'youtube-clips-doubao'
+         AND ts > NOW() - ($1 || ' hours')::interval`,
+      [String(hours)],
+    );
+    const r = rows[0] ?? { doubao_usd: "0", doubao_calls: "0", doubao_seconds: "0" };
+    return {
+      doubaoUsd: Number(r.doubao_usd ?? "0"),
+      doubaoCalls: parseInt(r.doubao_calls ?? "0", 10),
+      doubaoSeconds: Number(r.doubao_seconds ?? "0"),
+    };
+  } catch {
+    return { doubaoUsd: 0, doubaoCalls: 0, doubaoSeconds: 0 };
+  }
+}
+
+/**
+ * Sum Doubao spend for a single run. Joins cost_event ←→ runs by
+ * metadata.run_id (stamped at log time by pipeline/cost_log.py).
+ * Returns zeros if cost_tracker DB is unreachable or run had no AI calls.
+ */
+export async function loadRunCost(runId: number): Promise<RunCost> {
+  try {
+    const rows = await costQuery<{
+      doubao_usd: string | null;
+      doubao_calls: string;
+      doubao_seconds: string | null;
+    }>(
+      `SELECT
+         COALESCE(SUM(cost_usd), 0)::text AS doubao_usd,
+         COUNT(*)::text                   AS doubao_calls,
+         COALESCE(SUM((metadata->>'duration_sec')::numeric), 0)::text AS doubao_seconds
+       FROM cost_event
+       WHERE service = 'youtube-clips-doubao'
+         AND (metadata->>'run_id')::bigint = $1`,
+      [runId],
+    );
+    const r = rows[0] ?? { doubao_usd: "0", doubao_calls: "0", doubao_seconds: "0" };
+    return {
+      doubaoUsd: Number(r.doubao_usd ?? "0"),
+      doubaoCalls: parseInt(r.doubao_calls ?? "0", 10),
+      doubaoSeconds: Number(r.doubao_seconds ?? "0"),
+    };
+  } catch {
+    return { doubaoUsd: 0, doubaoCalls: 0, doubaoSeconds: 0 };
+  }
+}
 
 type RunRow = {
   id: number;

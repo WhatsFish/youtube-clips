@@ -10,6 +10,16 @@ function config() {
   };
 }
 
+function costConfig() {
+  return {
+    host: process.env.COST_PG_HOST ?? process.env.PG_HOST ?? "db",
+    port: parseInt(process.env.COST_PG_PORT ?? process.env.PG_PORT ?? "5432", 10),
+    user: process.env.COST_PG_USER ?? "cost_tracker",
+    password: process.env.COST_PG_PASSWORD ?? "",
+    database: process.env.COST_PG_DB ?? "cost_tracker",
+  };
+}
+
 /**
  * Ad-hoc query helper. Opens a connection per request — fine at the
  * volume this dashboard generates. Mirrors the pattern used elsewhere
@@ -20,6 +30,21 @@ export async function query<T extends QueryResultRow = Record<string, unknown>>(
   params: unknown[] = [],
 ): Promise<T[]> {
   const c = new Client(config());
+  await c.connect();
+  try {
+    const r = await c.query<T>(sql, params);
+    return r.rows;
+  } finally {
+    await c.end();
+  }
+}
+
+/** Same as query() but targets the shared cost_tracker DB. */
+export async function costQuery<T extends QueryResultRow = Record<string, unknown>>(
+  sql: string,
+  params: unknown[] = [],
+): Promise<T[]> {
+  const c = new Client(costConfig());
   await c.connect();
   try {
     const r = await c.query<T>(sql, params);

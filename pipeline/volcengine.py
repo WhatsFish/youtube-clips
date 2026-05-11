@@ -182,14 +182,31 @@ class VolcengineClient:
         *,
         duration_sec: int = 10,
         resolution: str = "720p",
+        run_id: int | None = None,
+        shot_idx: int | None = None,
     ) -> VideoGenResult:
         """Synchronous one-shot: create + wait + download. Returns the
         result object for callers that want metadata; the mp4 is at
         `target_path`.
+
+        Logs one cost_event row per successful generation (best-effort).
         """
+        from . import cost_log
+        t0 = time.monotonic()
         tid = self.create_task(
             prompt, duration_sec=duration_sec, resolution=resolution
         )
         result = self.wait_for_task(tid)
         self.download(result, target_path)
+        wall = time.monotonic() - t0
+        cost_log.log_doubao_video(
+            duration_sec=result.duration_sec or duration_sec,
+            resolution=result.resolution or resolution,
+            wall_clock_sec=wall,
+            model=self.model,
+            run_id=run_id,
+            shot_idx=shot_idx,
+            task_id=result.task_id,
+            prompt=prompt,
+        )
         return result

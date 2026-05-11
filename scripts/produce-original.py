@@ -196,6 +196,7 @@ def _acquire_one_ai(
     query: str,
     assets_dir: Path,
     volc: VolcengineClient,
+    run_id: int | None = None,
 ) -> dict:
     """Generate this shot's clip via Doubao Seedance. Use 10s default —
     most narration lines fit under that, and longer means more flexibility
@@ -204,7 +205,10 @@ def _acquire_one_ai(
     target = assets_dir / f"clip-{i:02d}-ai-{slugify_query(query)}.mp4"
     print(f"  s{i:02d} doubao generating ({query!r}) — this takes ~60s...")
     t0 = time.monotonic()
-    result = volc.generate(query, target, duration_sec=10, resolution="720p")
+    result = volc.generate(
+        query, target, duration_sec=10, resolution="720p",
+        run_id=run_id, shot_idx=i,
+    )
     print(
         f"  s{i:02d} doubao:{result.task_id} ({result.duration_sec:.0f}s clip) "
         f"in {time.monotonic()-t0:.0f}s wall"
@@ -266,7 +270,7 @@ def _acquire_assets(
                             f"s{i:02d} fallback pexels:{src.get('video_id')}",
                             shot_idx=i, video_id=src.get("video_id"))
             else:
-                src = _acquire_one_ai(sh, i, query, assets_dir, volc)
+                src = _acquire_one_ai(sh, i, query, assets_dir, volc, run_id=run_id)
                 events.emit(run_id, "acquire", "done",
                             f"s{i:02d} doubao:{src.get('video_id')}",
                             shot_idx=i, video_id=src.get("video_id"))
