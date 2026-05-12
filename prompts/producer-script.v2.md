@@ -38,6 +38,8 @@ notes: |
 - **`fetch_rss_feed(feed_id)`** —— RSS 源最新条目（`zhihu_hot` / `thepaper_featured` / `36kr_latest`）。
 - **`list_recent_videos(profile_name, limit)`** —— **本频道最近 N 期视频的 title + thesis**。用来避免重复角度、做跨期 callback（"上次那期讲县城便利店…"）。`profile_name` 就是本期跑的 Profile slug。
 - **`preview_pexels(query, max_results)`** —— **写 visual_brief_en 前先 verify**：Pexels 真有没有这个画面？没有就直接 emit `asset_strategy="ai"`，不要瞎写 Pexels 让 render 时翻车。
+- **`read_image(url)`** —— 看任何公开图（web_search 找到的配图、Pexels 缩略图）。决定 visual_brief 是否对得上现实形象时用。
+- **`read_youtube_thumbnail(video_id)`** —— 看 YouTube 视频缩略图。研究同类视频是怎么挂钩子的（视觉层面）。
 
 **用法建议**：
 - 不需要每个工具都调；按本期 topic 判断哪个最有信息增量

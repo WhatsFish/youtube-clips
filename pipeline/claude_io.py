@@ -30,6 +30,8 @@ DEFAULT_MCP_TOOLS = [
     "mcp__ytclips__web_search",
     "mcp__ytclips__list_recent_videos",
     "mcp__ytclips__preview_pexels",
+    "mcp__ytclips__read_image",
+    "mcp__ytclips__read_youtube_thumbnail",
 ]
 
 

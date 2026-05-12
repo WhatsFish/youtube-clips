@@ -33,6 +33,8 @@ notes: |
 - **`fetch_url(url, ...)`** —— 拉公开网页正文（澎湃 / 36氪 等 static HTML）。
 - **`fetch_rss_feed(feed_id)`** —— `zhihu_hot` / `thepaper_featured` / `36kr_latest` 当下相关讨论。
 - **`list_recent_videos(profile_name, limit)`** —— **本频道最近 N 期视频**，避免重复角度、可做 callback。
+- **`read_youtube_thumbnail(video_id)`** —— 看一支 YouTube 视频缩略图（不下载）。研究他人 hook / 视觉风格 / 缩略图套路。
+- **`read_image(url)`** —— 看任何公开图（web_search 找到的图、Pexels 预览、b 站封面）。"看见"再判，不是猜。
 
 不需要每个都调；按本期选题决定。**最多 5 次工具调用**。工具返回 `error` 字段就放弃换路。**绝不照抄工具返回的内容**——只学结构 / 抓事实 / 找角度。
 

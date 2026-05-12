@@ -40,6 +40,8 @@ notes: |
 - **`search_bilibili(query, ...)`** —— 看 b 站同题材（"越南物价" "韩国月薪" 等）UP 主用的对比框架。
 - **`read_bilibili_video(bvid, ...)`** —— 研究高赞海外日常解说的开场 hook。
 - **`list_recent_videos(profile_name, limit)`** —— **本频道最近做过哪些国家**，避免重复国家 / 题材。
+- **`read_youtube_thumbnail(video_id)`** —— 看 YouTube 候选缩略图，识别"日常 vlog vs 反应/合集"等视觉信号。
+- **`read_image(url)`** —— 看任何公开图（找到的物价新闻配图 / 当地街景照等）。
 
 **最多 5 次工具调用**。**不要照抄**——只用来取数据 / 找角度。
 

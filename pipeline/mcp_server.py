@@ -31,6 +31,7 @@ from pipeline.tools.web_tools import fetch_url, fetch_rss_feed
 from pipeline.tools.search_tools import web_search
 from pipeline.tools.channel_tools import list_recent_videos
 from pipeline.tools.pexels_tools import preview_pexels
+from pipeline.tools.image_tools import read_image, read_youtube_thumbnail
 
 
 mcp = FastMCP(
@@ -52,6 +53,11 @@ mcp.tool()(fetch_rss_feed)
 mcp.tool()(web_search)
 mcp.tool()(list_recent_videos)
 mcp.tool()(preview_pexels)
+# Image-returning tools need structured_output=False so FastMCP doesn't try
+# to build a Pydantic schema for the `Image | dict` union (it chokes on the
+# `Image` helper class).
+mcp.add_tool(read_image, structured_output=False)
+mcp.add_tool(read_youtube_thumbnail, structured_output=False)
 
 
 def main() -> None:

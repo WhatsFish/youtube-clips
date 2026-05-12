@@ -43,6 +43,8 @@ synthesis 模式靠**论点和数据**撑场，工具调用能直接补强这两
 - **`search_bilibili(query, ...)`** —— 看 b 站同议题视频，识别已被讲烂 / 还没被讲的角度。
 - **`read_bilibili_video(bvid, ...)`** —— 研究一支高质量同议题视频如何论证。
 - **`list_recent_videos(profile_name, limit)`** —— **本频道最近 N 期视频**，避免重复议题、可做 thesis 之间的 callback。
+- **`read_image(url)`** —— 看任何公开图（行业报告里的图表 / 新闻配图）。synthesis 引用具体数据时，能看图比读 caption 更准。
+- **`read_youtube_thumbnail(video_id)`** —— 看 YouTube 视频缩略图，识别"严肃分析 vs 标题党 反应"等。
 
 **最多 5 次工具调用**。**绝不照抄工具返回的内容**——只学结构 / 取事实 / 找反共识角度。
 
