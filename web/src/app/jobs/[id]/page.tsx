@@ -96,6 +96,41 @@ export default async function JobDetail({
         </section>
       ) : null}
 
+      {job.edl?.references && job.edl.references.length > 0 ? (
+        <section className="mb-6">
+          <h2 className="text-xs font-semibold uppercase tracking-wider text-neutral-500 mb-2">
+            Agent 查阅的资料 ({job.edl.references.length})
+          </h2>
+          <ul className="space-y-2">
+            {job.edl.references.map((r, i) => (
+              <li
+                key={i}
+                className="text-sm border border-neutral-200 dark:border-neutral-800 rounded-md p-2.5"
+              >
+                <div className="flex items-baseline gap-2 flex-wrap">
+                  <span className="text-xs font-mono text-neutral-500 uppercase">
+                    {r.type}
+                  </span>
+                  <a
+                    href={r.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="underline font-medium hover:text-neutral-900 dark:hover:text-neutral-100"
+                  >
+                    {r.title ?? r.id ?? r.url}
+                  </a>
+                </div>
+                {r.why_used ? (
+                  <p className="text-xs text-neutral-600 dark:text-neutral-400 mt-1">
+                    {r.why_used}
+                  </p>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
       {job.edl?.sources && job.edl.sources.length > 1 ? (
         <section className="mb-6">
           <h2 className="text-xs font-semibold uppercase tracking-wider text-neutral-500 mb-2">

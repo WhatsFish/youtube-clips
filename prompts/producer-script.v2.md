@@ -131,9 +131,26 @@ JSON schema:
       "purpose": "选这段画面的原因"
     }}
   ],
-  "tools_used": ["search_bilibili", ...]
+  "tools_used": ["search_bilibili", ...],
+  "references": [
+    {{
+      "type": "bilibili",
+      "id": "BV1xxxxxxxxx",
+      "url": "https://www.bilibili.com/video/BV1xxxxxxxxx",
+      "title": "对应视频标题",
+      "why_used": "一句话说这条对本期论点贡献了什么"
+    }},
+    {{
+      "type": "url",
+      "url": "https://www.thepaper.cn/...",
+      "title": "页面标题（无法判断就用 URL 末段）",
+      "why_used": "一句话"
+    }}
+  ]
 }}
 ```
+
+**references 是给视频读者看的来源列表**——网页 /jobs/<id> 会显示这些。只列**真正**对你的论点 / 用词 / 角度有影响的 1-5 条，没影响的 tool 调用不要列。
 
 ================ PROFILE ================
 {profile_block}

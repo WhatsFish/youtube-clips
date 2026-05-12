@@ -18,6 +18,17 @@ export type EdlSource = {
   page_url?: string;
 };
 
+/** Self-reported references the agent consulted via MCP tools (producer
+ *  Stage 2 v2+). Surfaced under "Agent 查阅的资料" on the detail page so
+ *  readers can verify provenance. Older EDLs have no references field. */
+export type EdlReference = {
+  type: "bilibili" | "url" | string;
+  id?: string;       // BV id for type=bilibili
+  url: string;
+  title?: string;
+  why_used?: string;
+};
+
 export type Edl = {
   decision: string;
   profile_name?: string;
@@ -39,6 +50,8 @@ export type Edl = {
   source_id?: number;        // primary source's DB id (always set)
   source_ids?: number[];     // v4+: every source's DB id, primary first
   job_id?: number;
+  references?: EdlReference[];  // tool-use Stage 2: agent-cited sources
+  tools_used?: string[];        // bare list of MCP tool names invoked
 };
 
 /**
