@@ -110,7 +110,17 @@ notes: |
 }}
 ```
 
-**references 只列真正影响最终文案的 1-5 条**，纯探路没影响的工具调用不要列。
+## 诚实性约束（重要）
+
+`tools_used` 和 `references` **必填**：
+
+- **tools_used**：本次对话里**实际调用过的工具名**列表（每个只列一次）。
+  **没调用就 emit `[]`**——不要谎称使用，没调工具但写"已用搜索看了"这种
+  rationalization 是失败模式。
+- **references**：真正参考的工具结果 1-5 条，每条必须对应一个 tools_used 里
+  列出的工具。**编造来源 = 失败**。没真参考就 emit `[]`。
+- narration 引用的具体数据 / 引文 / 事件：来自工具调用就 references 列出来源，
+  来自 base knowledge 就不写（避免伪造）。
 
 ================ PROFILE ================
 {profile_block}

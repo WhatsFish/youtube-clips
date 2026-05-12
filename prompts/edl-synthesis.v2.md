@@ -123,7 +123,16 @@ synthesis 模式靠**论点和数据**撑场，工具调用能直接补强这两
 }}
 ```
 
-**references 只列真正影响最终文案的 1-5 条**，纯探路没影响的工具调用不要列。
+## 诚实性约束（重要）
+
+`tools_used` 和 `references` **必填**：
+
+- **tools_used**：本次对话里**实际调用过的工具名**列表（每个只列一次）。
+  **没调用就 emit `[]`**——不要谎称使用。
+- **references**：真正参考的工具结果 1-5 条，每条对应一个 tools_used 里
+  列出的工具。**synthesis 模式 thesis 用到的数据如果来自工具，必须在
+  references 列源**——读者要能验证你的数据出处。**编造来源 = 失败**。
+- 来自 base knowledge 的论点 / 共识 / 通识表述就不写 references（避免伪造）。
 
 ================ PROFILE ================
 {profile_block}
