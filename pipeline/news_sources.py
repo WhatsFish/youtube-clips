@@ -188,6 +188,61 @@ def apply_keyword_filter(
     return out
 
 
+def fetch_youtube_topic_candidates(
+    queries: list[str],
+    *,
+    max_per_query: int = 5,
+    published_within_weeks: int = 4,
+) -> tuple[list[FeedItem], list[str]]:
+    """Use YouTube Search to surface vlog candidates as `FeedItem`s.
+
+    For channels whose topic ground-truth lives on YouTube (world-watching-cn
+    needs English daily-life vlogs from diverse countries), not RSS. Each
+    query (e.g. "Vietnam day in the life vlog") returns the top
+    `max_per_query` mid-length results; deduped across queries.
+
+    Output shape matches `fetch_feeds()` so the rest of discover-topics
+    treats both backends identically.
+    """
+    import datetime as _dt
+    from .youtube_search import search
+
+    cutoff = (
+        _dt.datetime.now(_dt.timezone.utc)
+        - _dt.timedelta(weeks=published_within_weeks)
+    ).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+    items: list[FeedItem] = []
+    skipped: list[str] = []
+    seen_ids: set[str] = set()
+    for q in queries:
+        try:
+            hits = search(
+                q, max_results=max_per_query,
+                published_after=cutoff, video_duration="medium",
+                order="viewCount",
+            )
+        except Exception as e:
+            skipped.append(f"youtube_search {q!r}: {type(e).__name__}: {e}")
+            continue
+        for h in hits:
+            if h.id in seen_ids:
+                continue
+            seen_ids.add(h.id)
+            desc = (h.description or "").strip()
+            items.append(
+                FeedItem(
+                    feed_id=f"youtube:{q}",
+                    feed_label=f"YouTube «{q}»",
+                    title=h.title,
+                    description=desc,
+                    link=h.url,
+                    published=h.published_at,
+                )
+            )
+    return items, skipped
+
+
 def render_registry_block() -> str:
     """Render the feed registry as a human-readable description block —
     useful for embedding in agent prompts so the Claude judge knows

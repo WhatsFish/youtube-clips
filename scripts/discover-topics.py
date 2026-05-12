@@ -38,6 +38,7 @@ from pipeline.profiles import fetch_profile, Profile
 from pipeline.claude_io import call_claude, extract_json
 from pipeline.news_sources import (
     fetch_feeds,
+    fetch_youtube_topic_candidates,
     apply_keyword_filter,
     render_registry_block,
     FeedItem,
@@ -69,17 +70,35 @@ def _discover_for_profile(profile: Profile, *, dry_run: bool = False) -> int:
         print(f"[{profile.name}] no topic_discovery config; skipping")
         return 0
     feed_ids = cfg.get("feed_ids") or []
-    if not feed_ids:
-        print(f"[{profile.name}] topic_discovery has no feed_ids; skipping")
+    youtube_queries = cfg.get("youtube_queries") or []
+    if not feed_ids and not youtube_queries:
+        print(
+            f"[{profile.name}] topic_discovery has neither feed_ids nor "
+            f"youtube_queries; skipping"
+        )
         return 0
     include = cfg.get("include_keywords") or []
     exclude = cfg.get("exclude_keywords") or []
     max_picks = int(cfg.get("max_picks") or 10)
 
     print(f"\n========= {profile.name} =========")
-    print(f"feeds: {', '.join(feed_ids)}")
-    items, skipped = fetch_feeds(feed_ids)
-    print(f"fetched {len(items)} items")
+    if feed_ids:
+        print(f"rsshub feeds: {', '.join(feed_ids)}")
+    if youtube_queries:
+        print(f"youtube queries: {len(youtube_queries)} (" +
+              ", ".join(q[:30] for q in youtube_queries[:3]) +
+              ("..." if len(youtube_queries) > 3 else "") + ")")
+    items: list[FeedItem] = []
+    skipped: list[str] = []
+    if feed_ids:
+        rss_items, rss_skipped = fetch_feeds(feed_ids)
+        items.extend(rss_items)
+        skipped.extend(rss_skipped)
+    if youtube_queries:
+        yt_items, yt_skipped = fetch_youtube_topic_candidates(youtube_queries)
+        items.extend(yt_items)
+        skipped.extend(yt_skipped)
+    print(f"fetched {len(items)} items total")
     for s in skipped:
         print(f"  SKIP: {s}")
 

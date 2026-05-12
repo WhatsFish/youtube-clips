@@ -75,6 +75,26 @@ VALUES (
       "must_include_disclaimer": false,
       "style_exemplars": {
         "ref_bvids": ["BV1fgoVBGE2M", "BV1kLdsByEhq", "BV12T4y1F7LT"]
+      },
+      "topic_discovery": {
+        "youtube_queries": [
+          "Vietnam Ho Chi Minh daily life vlog",
+          "Mexico City daily life cost of living",
+          "Portugal Lisbon expat daily vlog",
+          "Argentina Buenos Aires daily life",
+          "Kazakhstan Almaty daily routine",
+          "Egypt Cairo daily life vlog",
+          "Indonesia Bali daily routine expat",
+          "Turkey Istanbul cost of living vlog",
+          "Brazil Sao Paulo daily routine",
+          "Thailand Bangkok daily life vlog",
+          "Philippines Manila salary breakdown",
+          "Australia Sydney cost of living daily"
+        ],
+        "exclude_keywords": [
+          "shorts only", "TikTok compilation", "reaction video"
+        ],
+        "max_picks": 8
       }
     },
     "topic_generation_prompt": "你为一个面向中文受众的「环球生活观察」频道选题。候选话题应当聚焦最近 1-2 周内 YouTube 上的海外日常 vlog（任何国家都行，不限于日本和发达国家），重点放在能引起中国观众对比兴趣的内容：物价、工资、习俗、住房、餐饮、上下班。规避高门槛专业话题。每次产出 5-10 个候选 topic，每个含中文标题、一段中文描述和 3-5 个英文搜索关键词。",
