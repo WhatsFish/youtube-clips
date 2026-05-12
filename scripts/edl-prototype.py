@@ -68,7 +68,7 @@ from pipeline.profiles import fetch_profile
 from pipeline.claude_io import call_claude, extract_json
 from pipeline.transcript import parse_vtt, format_transcript
 from pipeline.frames import sample_frames, DEFAULT_INTERVAL_SEC as FRAME_INTERVAL_SEC
-from pipeline.exemplars import render_exemplars_block
+from pipeline.exemplars import render_exemplars_block, harvest_for_topic
 from pipeline import db, events
 
 RAW_BASE = Path("/video/youtube-clips/raw")
@@ -237,7 +237,12 @@ def build_prompt_kwargs(profile, sources: list[SourceSpec]):
     # without curated refs, etc.) so the prompt template's
     # `{style_exemplars_block}` placeholder cleanly degrades to a
     # no-op section.
-    ref_bvids = ((ch.get("style_exemplars") or {}).get("ref_bvids") or [])
+    # Dynamic exemplars: when Profile opts in via channel.style_exemplars.dynamic,
+    # search Bilibili for same-topic exemplars at EDL time. For commentary mode
+    # the "topic" is approximated by the primary source's title — that's what
+    # the video is actually about. Falls back to static ref_bvids on miss.
+    topic_seed = primary.title or ""
+    ref_bvids = harvest_for_topic(topic_seed, profile)
     style_exemplars_block = render_exemplars_block(ref_bvids)
 
     return {

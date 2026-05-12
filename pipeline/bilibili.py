@@ -116,6 +116,51 @@ class BilibiliClient:
 
     # ---- public API -------------------------------------------------------
 
+    def search(
+        self,
+        keyword: str,
+        *,
+        max_results: int = 20,
+        duration_band: str | None = "3",
+        order: str = "click",
+    ) -> list[dict]:
+        """Bilibili video search. Returns raw API items (lightweight metadata).
+
+        - `duration_band`: '1'(<5min) '2'(5-10) '3'(10-30) '4'(>30); None = any
+        - `order`: 'click'(views) 'pubdate' 'totalrank'(relevance) 'dm'(danmaku)
+        - Cookies required — Bilibili's web search API silently 412s without them.
+
+        Each item dict keys we care about:
+          - bvid, title (HTML-stripped), author, mid, pubdate,
+            duration ("MM:SS" string), play (view count),
+            video_review (danmaku), description
+        """
+        params = {
+            "keyword": keyword,
+            "search_type": "video",
+            "order": order,
+            "page": "1",
+        }
+        if duration_band:
+            params["duration"] = duration_band
+        url = (
+            "https://api.bilibili.com/x/web-interface/search/type?"
+            + urllib.parse.urlencode(params)
+        )
+        payload = self._get_json(url, need_cookies=True)
+        if payload.get("code") != 0:
+            raise RuntimeError(
+                f"bilibili search failed: code={payload.get('code')} "
+                f"msg={payload.get('message')!r}"
+            )
+        items = (payload.get("data") or {}).get("result") or []
+        # Strip Bilibili's <em class="keyword"> highlight wrappers from
+        # the title before returning, otherwise downstream sees XML noise.
+        for it in items:
+            t = it.get("title") or ""
+            it["title"] = re.sub(r"</?em[^>]*>", "", t)
+        return items[:max_results]
+
     def video_info(self, bvid_or_url: str) -> BiliVideo:
         """Fetch the canonical metadata for a video. Public endpoint, no auth."""
         bvid = extract_bvid(bvid_or_url)

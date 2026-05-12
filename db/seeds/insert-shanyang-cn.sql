@@ -70,7 +70,13 @@ VALUES (
       ],
       "must_include_disclaimer": false,
       "style_exemplars": {
-        "ref_bvids": ["BV12T4y1F7LT", "BV1Su411a7A3", "BV1KkRZBGEwi"]
+        "ref_bvids": ["BV12T4y1F7LT", "BV1Su411a7A3", "BV1KkRZBGEwi"],
+        "dynamic": {
+          "target_count": 3,
+          "min_views": 100000,
+          "duration_band": "3",
+          "max_age_days": 730
+        }
       },
       "topic_discovery": {
         "feed_ids": ["zhihu_hot", "thepaper_featured", "36kr_latest", "weibo_hot"],

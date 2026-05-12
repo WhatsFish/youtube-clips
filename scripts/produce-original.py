@@ -48,7 +48,7 @@ from pipeline.profiles import fetch_profile
 from pipeline.claude_io import call_claude, extract_json
 from pipeline.pexels import PexelsClient, slugify_query
 from pipeline.volcengine import VolcengineClient
-from pipeline.exemplars import render_exemplars_block
+from pipeline.exemplars import render_exemplars_block, harvest_for_topic
 from pipeline import db, events
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -137,7 +137,10 @@ def _script(profile, topic: str, outline: dict, job_dir: Path) -> dict:
         if ch.get("must_include_disclaimer") and disc_zh
         else ""
     )
-    ref_bvids = ((ch.get("style_exemplars") or {}).get("ref_bvids") or [])
+    # Dynamic exemplars: when the Profile opts in via channel.style_exemplars.dynamic,
+    # search Bilibili for same-topic viral videos at produce time. Falls back to
+    # the static ref_bvids list if search returns too few.
+    ref_bvids = harvest_for_topic(topic, profile)
     prompt = tmpl.render(
         profile_block=block_render,
         channel_position=ch.get("channel_position") or "Chinese commentary channel",
