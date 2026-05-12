@@ -36,6 +36,10 @@ CREATE TABLE IF NOT EXISTS topics (
     CHECK (status IN ('pending','approved','rejected','done')),
   source       TEXT         NOT NULL DEFAULT 'agent'
     CHECK (source IN ('agent','human')),
+  -- Free-form metadata: source URL (for topics discovered from RSS feeds),
+  -- suggested narrative angle from the topic-discover Claude judge,
+  -- raw item summary, etc. Optional; older topics may have NULL.
+  metadata     JSONB,
   generated_at TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
   approved_at  TIMESTAMPTZ
 );

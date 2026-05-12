@@ -8,6 +8,7 @@ import {
   type Job,
 } from "@/lib/jobs";
 import { listActiveRuns, listRecentFailures, loadRecentCost } from "@/lib/runs";
+import { countPendingTopics } from "@/lib/topics";
 import ActiveRunsLive from "@/components/ActiveRunsLive";
 
 export const dynamic = "force-dynamic";
@@ -44,11 +45,12 @@ export default async function Home() {
     dbError = e instanceof Error ? e.message : String(e);
   }
 
-  const [jobs, activeRuns, recentFailures, recentCost] = await Promise.all([
+  const [jobs, activeRuns, recentFailures, recentCost, pendingTopics] = await Promise.all([
     listJobs(),
     listActiveRuns(),
     listRecentFailures(5),
     loadRecentCost(24),
+    countPendingTopics(),
   ]);
   const jobsByProfile = groupByProfile(jobs);
 
@@ -69,16 +71,29 @@ export default async function Home() {
               Profile-based multi-platform video remix pipeline.
             </p>
           </div>
-          {recentCost.doubaoCalls > 0 && (
-            <div className="text-xs text-neutral-500 text-right">
-              <div className="uppercase tracking-wider">
-                24h Doubao 花费
+          <div className="flex items-baseline gap-4 text-xs">
+            {pendingTopics > 0 && (
+              <Link
+                href="/topics"
+                className="text-neutral-700 dark:text-neutral-300 hover:underline"
+              >
+                <span className="uppercase tracking-wider text-neutral-500">
+                  待审批 topic
+                </span>{" "}
+                <span className="font-medium">{pendingTopics}</span>
+              </Link>
+            )}
+            {recentCost.doubaoCalls > 0 && (
+              <div className="text-neutral-500 text-right">
+                <div className="uppercase tracking-wider">
+                  24h Doubao 花费
+                </div>
+                <div className="font-mono text-neutral-700 dark:text-neutral-300">
+                  ${recentCost.doubaoUsd.toFixed(2)} · {recentCost.doubaoCalls} 调用
+                </div>
               </div>
-              <div className="font-mono text-neutral-700 dark:text-neutral-300">
-                ${recentCost.doubaoUsd.toFixed(2)} · {recentCost.doubaoCalls} 调用
-              </div>
-            </div>
-          )}
+            )}
+          </div>
         </div>
       </header>
 
