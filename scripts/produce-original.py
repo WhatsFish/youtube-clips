@@ -233,6 +233,19 @@ def _strip_audio(mp4: Path) -> None:
     tmp.replace(mp4)
 
 
+def _doubao_duration_for_shot(narration: str | None) -> int:
+    """Right-size the Doubao clip to the narration's actual length.
+
+    Old behavior was a fixed 10s clip regardless of shot. That overshoots
+    most shots (narration averages 5-8s @ 4.5 chars/sec), wasting per-sec
+    pricing. We now request narr_dur + 1s headroom, clamped to Seedance's
+    accepted band [5, 10]. tpad fills any leftover at render time.
+    """
+    chars = len((narration or "").strip())
+    est = math.ceil(chars / CHARS_PER_SEC) + 1
+    return max(5, min(10, est))
+
+
 def _acquire_one_ai(
     sh: dict,
     i: int,
@@ -241,17 +254,27 @@ def _acquire_one_ai(
     volc: VolcengineClient,
     run_id: int | None = None,
 ) -> dict:
-    """Generate this shot's clip via Doubao Seedance. Use 10s default —
-    most narration lines fit under that, and longer means more flexibility
-    for tpad-free playback.
+    """Generate this shot's clip via Doubao Seedance.
+
+    Cost params chosen for affordable Phase-1 cost optimisation
+    (operator's KPI is Doubao spend):
+    - 480p resolution: half the per-sec cost of 720p; visual impact is
+      minimal because the clip plays under burned-in Chinese subtitles as
+      atmospheric B-roll — viewers' eyes stay on the subtitle band.
+    - Duration sized to the shot's narration (typically 5-7s) instead of
+      a flat 10s. Together this is ~75% reduction vs the prior config.
 
     Audio is stripped post-download — see _strip_audio comment.
     """
     target = assets_dir / f"clip-{i:02d}-ai-{slugify_query(query)}.mp4"
-    print(f"  s{i:02d} doubao generating ({query!r}) — this takes ~60s...")
+    dur = _doubao_duration_for_shot(sh.get("narration"))
+    print(
+        f"  s{i:02d} doubao generating ({query!r}) — {dur}s 480p, "
+        f"takes ~60s..."
+    )
     t0 = time.monotonic()
     result = volc.generate(
-        query, target, duration_sec=10, resolution="720p",
+        query, target, duration_sec=dur, resolution="480p",
         run_id=run_id, shot_idx=i,
     )
     _strip_audio(target)
