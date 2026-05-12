@@ -45,7 +45,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from pipeline.prompts import load_prompt
 from pipeline.profiles import fetch_profile
-from pipeline.claude_io import call_claude, extract_json
+from pipeline.claude_io import call_claude, extract_json, DEFAULT_MCP_CONFIG, DEFAULT_MCP_TOOLS
 from pipeline.pexels import PexelsClient, slugify_query
 from pipeline.volcengine import VolcengineClient
 from pipeline.exemplars import render_exemplars_block, harvest_for_topic
@@ -153,8 +153,25 @@ def _script(profile, topic: str, outline: dict, job_dir: Path) -> dict:
         outline_block=json.dumps(outline, ensure_ascii=False, indent=2),
         style_exemplars_block=render_exemplars_block(ref_bvids),
     )
-    print(f"prompt: {tmpl.stamp} ({len(prompt)} chars)")
-    raw = call_claude(prompt)
+    # Stage 2 script writer gets MCP tool access (search_bilibili,
+    # read_bilibili_video, fetch_url, fetch_rss_feed) when the template
+    # version supports it — v2+ documents the tools and instructs the
+    # agent to use them; v1 is text-only. Auto-detect by template stamp.
+    use_tools = tmpl.version >= 2 if isinstance(tmpl.version, int) else False
+    print(
+        f"prompt: {tmpl.stamp} ({len(prompt)} chars)"
+        + ("  [tools: MCP enabled]" if use_tools else "")
+    )
+    if use_tools:
+        raw = call_claude(
+            prompt,
+            timeout=900,
+            max_turns=12,
+            mcp_config=DEFAULT_MCP_CONFIG,
+            mcp_tools=DEFAULT_MCP_TOOLS,
+        )
+    else:
+        raw = call_claude(prompt)
     _save_raw(job_dir, "script.raw-claude.txt", raw)
     return extract_json(raw)
 

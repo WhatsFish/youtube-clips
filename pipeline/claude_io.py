@@ -17,6 +17,18 @@ CLAUDE_BIN = "/home/liharr/.nvm/versions/node/v24.15.0/bin/claude"
 
 JSON_BLOCK_RE = re.compile(r"```json\s*(\{.*?\})\s*```", re.DOTALL)
 
+# Project-local MCP server registry. Stage 2 prompts pass `mcp_config=DEFAULT_MCP_CONFIG`
+# to enable tool-use of the youtube-clips atomic capability set
+# (search_bilibili / read_bilibili_video / fetch_url / fetch_rss_feed).
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_MCP_CONFIG = PROJECT_ROOT / ".mcp-config.json"
+DEFAULT_MCP_TOOLS = [
+    "mcp__ytclips__search_bilibili",
+    "mcp__ytclips__read_bilibili_video",
+    "mcp__ytclips__fetch_url",
+    "mcp__ytclips__fetch_rss_feed",
+]
+
 
 def _escape_embedded_quotes(s: str) -> str:
     """Walk a JSON-ish blob and escape any ASCII double-quote that appears
@@ -76,6 +88,8 @@ def call_claude(
     max_turns: int = 1,
     tools: list[str] | None = None,
     add_dirs: list[str | Path] | None = None,
+    mcp_config: Path | str | None = None,
+    mcp_tools: list[str] | None = None,
 ) -> str:
     """Run `claude -p`, return stdout. Aborts the process on non-zero exit.
 
@@ -85,6 +99,12 @@ def call_claude(
     responsibility — one Read per frame plus one final answer turn.
     Without those args the function behaves exactly like before
     (single-turn, no tool access), preserving the cheap text-only path.
+
+    For MCP-tool-augmented calls (Stage 2 prompts that benefit from
+    looking up same-topic Bilibili videos, fetching source URLs, etc.),
+    pass `mcp_config=DEFAULT_MCP_CONFIG` and `mcp_tools=DEFAULT_MCP_TOOLS`
+    (or a subset). `max_turns` should be bumped to allow exploration —
+    typically 8-15 covers most tool-use patterns.
     """
     cmd = [
         CLAUDE_BIN,
@@ -92,11 +112,17 @@ def call_claude(
         "--dangerously-skip-permissions",
         "--max-turns", str(max_turns),
     ]
-    if tools:
+    # Compose tools list: built-ins (Read, etc) + MCP tools (mcp__*).
+    all_tools: list[str] = list(tools or [])
+    if mcp_tools:
+        all_tools.extend(mcp_tools)
+    if all_tools:
         # `--tools` accepts a space-separated list per CLI help. Passing as
         # a single token preserves shell-safe quoting (subprocess.run with a
         # list arg doesn't shell-interpret anyway, but keep tokens clean).
-        cmd.extend(["--tools", " ".join(tools)])
+        cmd.extend(["--tools", " ".join(all_tools)])
+    if mcp_config:
+        cmd.extend(["--mcp-config", str(mcp_config)])
     if add_dirs:
         cmd.append("--add-dir")
         cmd.extend(str(p) for p in add_dirs)

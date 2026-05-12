@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "ytclips": {
+      "command": "/home/liharr/src/youtube-clips/.venv/bin/python",
+      "args": ["-m", "pipeline.mcp_server"],
+      "cwd": "/home/liharr/src/youtube-clips"
+    }
+  }
+}
