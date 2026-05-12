@@ -35,6 +35,7 @@ import argparse
 import datetime as dt
 import json
 import math
+import os
 import re
 import subprocess
 import sys
@@ -48,6 +49,7 @@ from pipeline.profiles import fetch_profile
 from pipeline.claude_io import call_claude, extract_json, DEFAULT_MCP_CONFIG, DEFAULT_MCP_TOOLS
 from pipeline.pexels import PexelsClient, slugify_query
 from pipeline.volcengine import VolcengineClient
+from pipeline.cogvideox import CogVideoXClient
 from pipeline.exemplars import render_exemplars_block, harvest_for_topic
 from pipeline import db, events
 
@@ -251,26 +253,28 @@ def _acquire_one_ai(
     i: int,
     query: str,
     assets_dir: Path,
-    volc: VolcengineClient,
+    volc,
     run_id: int | None = None,
 ) -> dict:
-    """Generate this shot's clip via Doubao Seedance.
+    """Generate this shot's clip via the AI video tier — either
+    CogVideoX-Flash (free, preferred) or Doubao Seedance (paid fallback).
+    Both clients expose the same `.generate(prompt, target, duration_sec,
+    resolution, run_id, shot_idx)` signature so the dispatch is opaque.
 
-    Cost params chosen for affordable Phase-1 cost optimisation
-    (operator's KPI is Doubao spend):
-    - 480p resolution: half the per-sec cost of 720p; visual impact is
-      minimal because the clip plays under burned-in Chinese subtitles as
-      atmospheric B-roll — viewers' eyes stay on the subtitle band.
-    - Duration sized to the shot's narration (typically 5-7s) instead of
-      a flat 10s. Together this is ~75% reduction vs the prior config.
+    Cost params:
+    - Doubao 480p: ~half the per-sec cost of 720p. CogVideoX-Flash is
+      currently free regardless of resolution; we still pass duration so
+      the request stays right-sized.
+    - Duration sized to shot's narration (typically 5-7s), clamped to
+      vendor-accepted band (Doubao [5,10], CogVideoX {5,10}).
 
     Audio is stripped post-download — see _strip_audio comment.
     """
     target = assets_dir / f"clip-{i:02d}-ai-{slugify_query(query)}.mp4"
     dur = _doubao_duration_for_shot(sh.get("narration"))
+    vendor = volc.__class__.__name__.replace("Client", "").lower()
     print(
-        f"  s{i:02d} doubao generating ({query!r}) — {dur}s 480p, "
-        f"takes ~60s..."
+        f"  s{i:02d} {vendor} generating ({query!r}) — {dur}s, takes ~60s..."
     )
     t0 = time.monotonic()
     result = volc.generate(
@@ -278,20 +282,38 @@ def _acquire_one_ai(
         run_id=run_id, shot_idx=i,
     )
     _strip_audio(target)
+    # CogVideoX response doesn't echo duration; ffprobe the local file.
+    actual_dur = result.duration_sec or _ffprobe_seconds(target)
     print(
-        f"  s{i:02d} doubao:{result.task_id} ({result.duration_sec:.0f}s clip, muted) "
+        f"  s{i:02d} {vendor}:{result.task_id} ({actual_dur:.0f}s clip, muted) "
         f"in {time.monotonic()-t0:.0f}s wall"
     )
+    channel_label = "CogVideoX Flash" if vendor == "cogvideox" else "Doubao Seedance"
     return {
-        "video_id": f"doubao-{result.task_id}",
+        "video_id": f"{vendor}-{result.task_id}",
         "title": query,
-        "channel": "Doubao Seedance",
+        "channel": channel_label,
         "role": "primary" if i == 0 else "supplement",
         "path": str(target),
-        "duration_sec": result.duration_sec,
+        "duration_sec": actual_dur,
         "page_url": None,
         "asset_strategy": "ai",
     }
+
+
+def _ffprobe_seconds(path: Path) -> float:
+    """Best-effort duration probe; returns 0.0 if ffprobe unavailable."""
+    try:
+        out = subprocess.check_output(
+            [
+                "ffprobe", "-v", "error", "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1", str(path),
+            ],
+            text=True,
+        )
+        return float(out.strip())
+    except Exception:
+        return 0.0
 
 
 def _acquire_assets(
@@ -444,17 +466,28 @@ def main() -> int:
     events.emit(run_id, "assets", "start",
                 f"strategy={args.asset_strategy}, {len(shots)} shots")
     pexels = PexelsClient.from_env()
-    try:
-        volc = VolcengineClient()
-    except RuntimeError as e:
-        # AI key missing — that's fine if the strategy doesn't need it.
-        # If hybrid and any shot asked for AI, _acquire_assets falls
-        # back to pexels per-shot (and warns).
-        if args.asset_strategy == "ai":
-            events.emit(run_id, "assets", "fail", str(e))
-            events.finish_run(run_id, "failed", str(e))
-            sys.exit(f"--asset-strategy ai requires VOLC_ARK_API_KEY: {e}")
-        volc = None
+    # AI-tier vendor pick: prefer free CogVideoX-Flash when ZHIPU_API_KEY
+    # is configured, fall back to paid Doubao Seedance otherwise.
+    # Operator's KPI is Doubao spend; CogVideoX-Flash is free.
+    volc = None
+    if os.environ.get("ZHIPU_API_KEY"):
+        try:
+            volc = CogVideoXClient()
+            print(f"  ai vendor: CogVideoX-Flash (zhipu, free)")
+        except RuntimeError as e:
+            print(f"  CogVideoXClient init failed: {e}")
+    if volc is None:
+        try:
+            volc = VolcengineClient()
+            print(f"  ai vendor: Doubao Seedance (volcengine, paid)")
+        except RuntimeError as e:
+            if args.asset_strategy == "ai":
+                events.emit(run_id, "assets", "fail", str(e))
+                events.finish_run(run_id, "failed", str(e))
+                sys.exit(
+                    f"--asset-strategy ai needs ZHIPU_API_KEY or "
+                    f"VOLC_ARK_API_KEY: {e}"
+                )
     sources = _acquire_assets(
         shots, assets_dir, pexels, volc,
         global_strategy=args.asset_strategy,
