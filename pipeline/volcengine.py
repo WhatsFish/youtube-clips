@@ -132,10 +132,27 @@ class VolcengineClient:
         timeout_sec: int = DEFAULT_TIMEOUT_SEC,
         poll_interval_sec: int = POLL_INTERVAL_SEC,
     ) -> VideoGenResult:
-        """Block until the task succeeds, fails, or times out."""
+        """Block until the task succeeds, fails, or times out.
+
+        Transient network errors during poll (SSL handshake timeout,
+        DNS hiccups, transient 5xx) are caught and retried — the task
+        is still running on Volcengine's side, we just couldn't read
+        its state. Only the overall `timeout_sec` budget kills the poll.
+        """
+        import urllib.error
+        import socket
         deadline = time.monotonic() + timeout_sec
         while time.monotonic() < deadline:
-            r = self.get_task(task_id)
+            try:
+                r = self.get_task(task_id)
+            except (urllib.error.URLError, socket.timeout, ConnectionError) as e:
+                print(
+                    f"  [doubao poll] transient error: {type(e).__name__}: {e}; "
+                    f"retrying in {poll_interval_sec}s",
+                    flush=True,
+                )
+                time.sleep(poll_interval_sec)
+                continue
             status = r.get("status")
             if status == "succeeded":
                 content = r.get("content") or {}
