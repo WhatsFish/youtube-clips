@@ -598,30 +598,33 @@ def main() -> int:
                 f"strategy={args.asset_strategy}, {len(shots)} shots")
     pexels = PexelsClient.from_env()
     # AI-tier vendor pick — two parallel tiers:
-    #   - VIDEO  (`volc`): CogVideoX-Flash (zhipu, free, slow ~10min/clip)
-    #     → fallback to Doubao Seedance (volcengine, paid, fast ~60s)
+    #   - VIDEO  (`volc`): Doubao Seedance 1.0-pro-fast (volcengine, paid
+    #     ~$0.06/5s clip but FAST ~24s wall). Re-promoted to primary on
+    #     2026-05-13 — previous CogVideoX-Flash free path was unbearably
+    #     slow (~10min/clip). CogVideoX kept as last-resort fallback.
     #   - IMAGE  (`cogview`): CogView-3-Flash (zhipu, free, ~10s/image)
-    #     animated to clip via ken-burns. Operator's KPI is Doubao $; cogview
-    #     route gives free, fast, no-watermark-on-burn-in-subtitle B-roll.
+    #     animated to clip via ken-burns. Cheap path for shots where a
+    #     still suffices (no real motion needed).
     volc = None
-    if os.environ.get("ZHIPU_API_KEY"):
-        try:
-            volc = CogVideoXClient()
-            print(f"  ai-video vendor: CogVideoX-Flash (zhipu, free)")
-        except RuntimeError as e:
-            print(f"  CogVideoXClient init failed: {e}")
-    if volc is None:
-        try:
-            volc = VolcengineClient()
-            print(f"  ai-video vendor: Doubao Seedance (volcengine, paid)")
-        except RuntimeError as e:
-            if args.asset_strategy == "ai":
-                events.emit(run_id, "assets", "fail", str(e))
-                events.finish_run(run_id, "failed", str(e))
-                sys.exit(
-                    f"--asset-strategy ai needs ZHIPU_API_KEY or "
-                    f"VOLC_ARK_API_KEY: {e}"
+    try:
+        volc = VolcengineClient()
+        print(f"  ai-video vendor: Doubao Seedance 1.0-pro-fast (volcengine, ~$0.06/5s)")
+    except RuntimeError as e:
+        if os.environ.get("ZHIPU_API_KEY"):
+            try:
+                volc = CogVideoXClient()
+                print(
+                    f"  ai-video vendor: CogVideoX-Flash (zhipu, free) "
+                    f"— Doubao unavailable: {e}"
                 )
+            except RuntimeError as e2:
+                print(f"  CogVideoXClient init failed: {e2}")
+    if volc is None and args.asset_strategy == "ai":
+        events.emit(run_id, "assets", "fail", "no ai-video vendor available")
+        events.finish_run(run_id, "failed", "no ai-video vendor available")
+        sys.exit(
+            "--asset-strategy ai needs VOLC_ARK_API_KEY or ZHIPU_API_KEY"
+        )
     cogview = None
     if os.environ.get("ZHIPU_API_KEY"):
         try:

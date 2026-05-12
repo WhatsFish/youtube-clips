@@ -110,6 +110,12 @@ def log_event(
         traceback.print_exc(file=sys.stderr)
 
 
+# Doubao 1.0-pro-fast bills by output tokens, not seconds. As of 2026-05:
+# 0.0042 元 / 1000 tokens, ~7.2 RMB/USD → ~5.83e-7 USD/token
+DOUBAO_RMB_PER_K_TOKENS = 0.0042
+RMB_PER_USD = 7.2
+
+
 def log_doubao_video(
     *,
     duration_sec: float,
@@ -120,14 +126,26 @@ def log_doubao_video(
     shot_idx: int | None = None,
     task_id: str | None = None,
     prompt: str | None = None,
+    total_tokens: int | None = None,
 ) -> None:
-    """Convenience wrapper for Doubao Seedance video generation calls."""
-    cost = estimate_doubao_cost_usd(duration_sec, resolution)
+    """Convenience wrapper for Doubao Seedance video generation calls.
+
+    Pricing model depends on the Doubao tier:
+    - 1.5-pro / 1.0-pro: per-sec by resolution (DOUBAO_RATES_USD_PER_SEC)
+    - 1.0-pro-fast: per-token (DOUBAO_RMB_PER_K_TOKENS, requires
+      `total_tokens` from response.usage).
+    """
+    if total_tokens and "pro-fast" in (model or ""):
+        cost = round(total_tokens * DOUBAO_RMB_PER_K_TOKENS / 1000 / RMB_PER_USD, 6)
+    else:
+        cost = estimate_doubao_cost_usd(duration_sec, resolution)
     md: dict[str, Any] = {
         "duration_sec": duration_sec,
         "resolution": resolution,
         "task_id": task_id,
     }
+    if total_tokens:
+        md["total_tokens"] = total_tokens
     if run_id is not None:
         md["run_id"] = run_id
     if shot_idx is not None:

@@ -33,15 +33,15 @@ from pathlib import Path
 
 ARK_BASE = "https://ark.cn-beijing.volces.com/api/v3"
 
-# Default model is the production-tier ARK alias. The date-coded
-# variant (e.g. doubao-seedance-1-5-pro-251215) pins to a specific
-# release; aliases drift but track quality improvements automatically.
-# We pin date-coded so renders are reproducible across model updates.
-DEFAULT_MODEL = "doubao-seedance-1-5-pro-251215"
+# Operator switched 2026-05-13 from Seedance-1.5-pro to 1.0-pro-fast
+# after 1.5 quota ran out. 1.0-pro-fast is:
+#   - Faster: ~24s wall vs 60s for 1.5-pro on 5s 720p
+#   - Cheaper: ¥0.0042/1000 tokens (~¥0.44 / 5s 720p clip ≈ $0.06)
+#   - User account already has quota
+#   - Same async-task API shape
+DEFAULT_MODEL = "doubao-seedance-1-0-pro-fast-251015"
 
-# How long a generation is allowed to run before we give up. Doubao
-# typical run is 30-90 s; we leave headroom for queue pile-up during
-# popular hours.
+# 1.0-pro-fast typically ~20-40s; bump poll a bit for safety.
 POLL_INTERVAL_SEC = 8
 DEFAULT_TIMEOUT_SEC = 600
 
@@ -54,6 +54,7 @@ class VideoGenResult:
     resolution: str
     seed: int
     has_audio: bool
+    total_tokens: int = 0  # 1.0-pro-fast bills by tokens; captured for cost_log
 
 
 class VolcengineClient:
@@ -161,6 +162,7 @@ class VolcengineClient:
                     raise RuntimeError(
                         f"volcengine task {task_id} succeeded but no video_url"
                     )
+                usage = r.get("usage") or {}
                 return VideoGenResult(
                     task_id=task_id,
                     video_url=video_url,
@@ -168,6 +170,7 @@ class VolcengineClient:
                     resolution=r.get("resolution") or "",
                     seed=int(r.get("seed") or 0),
                     has_audio=bool(r.get("generate_audio")),
+                    total_tokens=int(usage.get("total_tokens") or 0),
                 )
             if status == "failed":
                 err = r.get("error") or r
@@ -225,5 +228,6 @@ class VolcengineClient:
             shot_idx=shot_idx,
             task_id=result.task_id,
             prompt=prompt,
+            total_tokens=result.total_tokens or None,
         )
         return result
