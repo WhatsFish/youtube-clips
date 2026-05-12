@@ -28,6 +28,9 @@ from mcp.server.fastmcp import FastMCP
 
 from pipeline.tools.bilibili_tools import search_bilibili, read_bilibili_video
 from pipeline.tools.web_tools import fetch_url, fetch_rss_feed
+from pipeline.tools.search_tools import web_search
+from pipeline.tools.channel_tools import list_recent_videos
+from pipeline.tools.pexels_tools import preview_pexels
 
 
 mcp = FastMCP(
@@ -46,6 +49,9 @@ mcp.tool()(search_bilibili)
 mcp.tool()(read_bilibili_video)
 mcp.tool()(fetch_url)
 mcp.tool()(fetch_rss_feed)
+mcp.tool()(web_search)
+mcp.tool()(list_recent_videos)
+mcp.tool()(preview_pexels)
 
 
 def main() -> None:

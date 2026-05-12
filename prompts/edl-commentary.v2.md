@@ -27,10 +27,12 @@ notes: |
 
 写之前**可以**先调 1-3 个工具增加信息密度，提升论点质量：
 
-- **`search_bilibili(query, ...)`** —— 搜 b 站同题材视频，看中文 UP 主们怎么讲这类内容。query 用 5-12 字关键词，不是叙事标题。
-- **`read_bilibili_video(bvid, ...)`** —— 读一支高赞同题材视频的字幕，研究开场 hook / 节奏 / 收尾。
-- **`fetch_url(url, ...)`** —— 拉一个公开网页正文（适合 static HTML 新闻类）。事实校验、找最新数据用。
-- **`fetch_rss_feed(feed_id)`** —— 读 `zhihu_hot` / `thepaper_featured` / `36kr_latest` 找当下相关话题。
+- **`web_search(query, max_results, region)`** —— 全网搜索（DDG）。不知道 URL 时先搜后 fetch_url 读原文。region: "cn-zh" 中 / "us-en" 英 / "wt-wt" 全球。
+- **`search_bilibili(query, ...)`** —— 搜 b 站同题材视频，看中文 UP 主们怎么讲。
+- **`read_bilibili_video(bvid, ...)`** —— 读高赞同题材字幕，研究开场 / 节奏 / 收尾。
+- **`fetch_url(url, ...)`** —— 拉公开网页正文（澎湃 / 36氪 等 static HTML）。
+- **`fetch_rss_feed(feed_id)`** —— `zhihu_hot` / `thepaper_featured` / `36kr_latest` 当下相关讨论。
+- **`list_recent_videos(profile_name, limit)`** —— **本频道最近 N 期视频**，避免重复角度、可做 callback。
 
 不需要每个都调；按本期选题决定。**最多 5 次工具调用**。工具返回 `error` 字段就放弃换路。**绝不照抄工具返回的内容**——只学结构 / 抓事实 / 找角度。
 

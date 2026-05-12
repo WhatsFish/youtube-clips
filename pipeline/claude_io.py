@@ -27,6 +27,9 @@ DEFAULT_MCP_TOOLS = [
     "mcp__ytclips__read_bilibili_video",
     "mcp__ytclips__fetch_url",
     "mcp__ytclips__fetch_rss_feed",
+    "mcp__ytclips__web_search",
+    "mcp__ytclips__list_recent_videos",
+    "mcp__ytclips__preview_pexels",
 ]
 
 

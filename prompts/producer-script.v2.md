@@ -31,10 +31,13 @@ notes: |
 
 写之前**最好先调 1-3 个工具看一眼真实世界的同题材内容**——能让你的论点不落入空泛、文字不离地：
 
-- **`search_bilibili(query, max_results, duration_band)`** —— 搜 b 站同题材视频，看大家怎么讲、什么角度、什么 hook。query 用 5-12 字的关键词组合（不是叙事标题）。
-- **`read_bilibili_video(bvid, include_transcript=True)`** —— 读一支 b 站视频的全部 metadata + AI 字幕。看高赞同题材的开场怎么开、收尾怎么收、节奏怎么走。
-- **`fetch_url(url, max_chars)`** —— 拉一个公开网页的正文（澎湃 / 36氪 / 知乎专栏等 static HTML 网站效果好）。读源新闻 / 行业分析帮你抓住事实和最新动态。
-- **`fetch_rss_feed(feed_id)`** —— 读 RSS 源最新一批条目（`zhihu_hot` / `thepaper_featured` / `36kr_latest`）。看本周还有什么相关讨论可以呼应。
+- **`web_search(query, max_results, region)`** —— 全网搜索（DDG），返回标题+URL+短摘要。不知道 URL 时**先用这条找**，再 fetch_url 读原文。region 用 "cn-zh" 中文优先 / "us-en" 英文优先 / "wt-wt" 全球。
+- **`search_bilibili(query, max_results, duration_band)`** —— 搜 b 站同题材视频，看大家怎么讲、什么角度、什么 hook。query 用 5-12 字关键词，不是叙事标题。
+- **`read_bilibili_video(bvid, include_transcript=True)`** —— 读一支 b 站视频的 metadata + AI 字幕。研究高赞开场 / 收尾 / 节奏。
+- **`fetch_url(url, max_chars)`** —— 拉公开网页正文（澎湃 / 36氪 / 维基等 static HTML 效果好）。
+- **`fetch_rss_feed(feed_id)`** —— RSS 源最新条目（`zhihu_hot` / `thepaper_featured` / `36kr_latest`）。
+- **`list_recent_videos(profile_name, limit)`** —— **本频道最近 N 期视频的 title + thesis**。用来避免重复角度、做跨期 callback（"上次那期讲县城便利店…"）。`profile_name` 就是本期跑的 Profile slug。
+- **`preview_pexels(query, max_results)`** —— **写 visual_brief_en 前先 verify**：Pexels 真有没有这个画面？没有就直接 emit `asset_strategy="ai"`，不要瞎写 Pexels 让 render 时翻车。
 
 **用法建议**：
 - 不需要每个工具都调；按本期 topic 判断哪个最有信息增量

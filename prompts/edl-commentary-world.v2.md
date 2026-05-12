@@ -34,10 +34,12 @@ notes: |
 
 写之前**强烈建议**调 1-3 个工具，特别是要做「物价对比 / 工资购买力」时——查真实最新数据是这频道的灵魂：
 
-- **`fetch_url(url, ...)`** —— 拉关于源视频所在国家最近的物价 / 最低工资 / 汇率新闻正文。**给硬数据用这条**。
-- **`fetch_rss_feed(feed_id)`** —— 读 `zhihu_hot` / `thepaper_featured` / `36kr_latest` 找当下热点梗或对比角度。
-- **`search_bilibili(query, ...)`** —— 看 b 站同题材（"日本物价" / "韩国月薪" 等）UP 主们用的对比框架。
+- **`web_search(query, max_results, region)`** —— 全网搜索（DDG）。**查最新物价 / 工资 / 汇率必备**——比单 fetch_url 灵活，找到 URL 再 fetch 读详情。region 选 us-en / wt-wt 看英文源。
+- **`fetch_url(url, ...)`** —— 拉具体网页正文（适合新闻 / 维基 等 static HTML）。
+- **`fetch_rss_feed(feed_id)`** —— `zhihu_hot` / `thepaper_featured` / `36kr_latest` 找当下热点梗。
+- **`search_bilibili(query, ...)`** —— 看 b 站同题材（"越南物价" "韩国月薪" 等）UP 主用的对比框架。
 - **`read_bilibili_video(bvid, ...)`** —— 研究高赞海外日常解说的开场 hook。
+- **`list_recent_videos(profile_name, limit)`** —— **本频道最近做过哪些国家**，避免重复国家 / 题材。
 
 **最多 5 次工具调用**。**不要照抄**——只用来取数据 / 找角度。
 

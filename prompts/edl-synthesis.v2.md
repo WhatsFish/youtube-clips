@@ -37,10 +37,12 @@ notes: |
 
 synthesis 模式靠**论点和数据**撑场，工具调用能直接补强这两块：
 
+- **`web_search(query, max_results, region)`** —— 全网搜索（DDG）。**找事实 / 找原文必备**——synthesis 数据靠这条挖。region 选合适语言（cn-zh / us-en / wt-wt）。
 - **`fetch_url(url, ...)`** —— 拉 36氪 / 澎湃 / 公司官方文档 / 行业报告网页正文。**事实核对优先用这条**。
-- **`fetch_rss_feed(feed_id)`** —— 读 `36kr_latest` / `zhihu_hot` / `thepaper_featured` 找当下相关讨论。看正反方有没有新立场。
+- **`fetch_rss_feed(feed_id)`** —— `36kr_latest` / `zhihu_hot` / `thepaper_featured` 当下相关讨论。
 - **`search_bilibili(query, ...)`** —— 看 b 站同议题视频，识别已被讲烂 / 还没被讲的角度。
 - **`read_bilibili_video(bvid, ...)`** —— 研究一支高质量同议题视频如何论证。
+- **`list_recent_videos(profile_name, limit)`** —— **本频道最近 N 期视频**，避免重复议题、可做 thesis 之间的 callback。
 
 **最多 5 次工具调用**。**绝不照抄工具返回的内容**——只学结构 / 取事实 / 找反共识角度。
 
