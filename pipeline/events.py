@@ -153,13 +153,44 @@ def finish_run(
 
 
 def register_atexit(run_id: int | None) -> None:
-    """Register an atexit hook that marks the run failed if it never
-    reached a terminal state (e.g. the script crashed without calling
-    finish_run, or was Ctrl-C'd mid-pipeline). No-op if run already
-    finished — finish_run's WHERE clause guards against double-writes."""
+    """Mark the run failed when the process exits without an explicit
+    terminal call. Covers three exit paths:
+
+    1. **atexit**: normal Python exit (including uncaught exceptions).
+       finish_run's WHERE status='running' guards against overwriting
+       an already-terminal state.
+    2. **SIGTERM** (e.g. `kill <pid>` from operator): atexit does NOT
+       fire on signals by default; we install a handler that finishes
+       the run then re-raises the default behaviour.
+    3. **SIGINT** (Ctrl-C): same handler.
+
+    Without these guards, a killed produce-original.py leaves its run
+    row stuck on status='running' forever, and the web `/runs/[id]`
+    page reports an in-progress stage that's actually dead.
+    """
     if run_id is None:
         return
     import atexit
-    atexit.register(
-        finish_run, run_id, "failed", "process exited without finishing run"
-    )
+    import signal
+
+    def _mark_failed(reason: str) -> None:
+        finish_run(run_id, "failed", reason)
+
+    atexit.register(_mark_failed, "process exited without finishing run")
+
+    def _signal_handler(signum, _frame):
+        _mark_failed(f"terminated by signal {signum}")
+        # Re-raise default behaviour (process dies)
+        signal.signal(signum, signal.SIG_DFL)
+        try:
+            import os
+            os.kill(os.getpid(), signum)
+        except Exception:
+            pass
+
+    for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        try:
+            signal.signal(sig, _signal_handler)
+        except (ValueError, OSError):
+            # Some signals may not be settable in all environments
+            pass
