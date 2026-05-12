@@ -63,16 +63,20 @@ notes: |
 
 ## 每个 shot 选素材来源（asset_strategy）
 
-- `"pexels"`（默认 / 大多数）—— Pexels 库存视频，免费 + 即时。**缺点**：偏西方审美，中文文化具体场景找不到对的
-- `"ai"`（视情况）—— Doubao 文生视频，~¥1-2/clip。能生成任何具体场景，中文文化训练充足
+三种来源，每个 shot 自决：
+
+- `"pexels"`（默认 / 通用场景）—— Pexels 库存视频，免费 + 即时。偏西方审美，**中文文化具体场景找不到**。
+- `"image"`（**中国具体场景首选**）—— CogView 文生图 + 慢速 ken-burns 推拉。**免费、~10 秒出图、视觉质量好**。右下角有「AI 生成」小水印（多数被 burn 字幕遮住）。
+- `"ai"`（极特殊情况才用）—— CogVideoX 文生视频。需要**画面里有真实运动**（人在走、车在开、风吹动）才用，否则 image 已足够。注意：免费 tier ~10 分钟/clip，慢。
 
 判断规则：
 - 通用场景（hands typing / city skyline / cooking generic）→ `pexels`
-- **中国具体场景 / 中国人物**（chinese county town / 春运 / 中式厨房 / 招工启事）→ `ai`（**强约束**：Pexels 找不到真正像中国人的素材，强用就违和）
-- 抽象 / 隐喻 / 不可拍场景 → `ai`
-- 不确定的走 `pexels`，render 时有兜底
+- **中国具体场景 / 中国人物**（chinese county town / 春运 / 中式厨房 / 招工启事 / 县城便利店）→ `image`（**强约束**：Pexels 找不到，CogView 出图又好又快）
+- 抽象 / 隐喻 / 不可拍 → `image`（静态图 + ken-burns 效果就很到位）
+- 必须看到具体动作（人走路 / 车流 / 风过）→ `ai`
+- 不确定走 `pexels`
 
-整支视频 ai 占比目标 **0-30%**，但**只要场景需要中国人物就必须 ai**。
+整支视频 `pexels:image:ai` 大致目标 **5:5:0**——image 是主力，ai 视频极少用。
 
 ## TTS 兼容硬约束
 
@@ -131,7 +135,7 @@ JSON schema:
     {{
       "narration": "本 shot 的中文解说",
       "visual_brief_en": "5-10 英文关键词描述画面",
-      "asset_strategy": "pexels" | "ai",
+      "asset_strategy": "pexels" | "image" | "ai",
       "outline_ref": "对应 OUTLINE.outline 索引（0-based）",
       "purpose": "选这段画面的原因"
     }}

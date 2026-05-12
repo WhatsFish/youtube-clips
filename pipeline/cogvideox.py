@@ -31,8 +31,12 @@ from pathlib import Path
 BIGMODEL_BASE = "https://open.bigmodel.cn/api/paas/v4"
 
 DEFAULT_MODEL = "cogvideox-flash"
-POLL_INTERVAL_SEC = 8
-DEFAULT_TIMEOUT_SEC = 600
+# Free tier appears RPM-bounded — generous poll interval avoids
+# repeatedly hitting 429 during the ~60-90s typical generation window.
+POLL_INTERVAL_SEC = 15
+# Free tier free is ~10 min/clip P50 (much slower than Doubao Pro ~60-90s).
+# 20 min covers tail latency without making the pipeline indefinitely stall.
+DEFAULT_TIMEOUT_SEC = 1200
 
 # Size options supported by CogVideoX-Flash. We always use 16:9
 # 1920x1080 for the standard render aspect; other sizes documented for
@@ -62,6 +66,32 @@ class CogVideoXClient:
             )
         self.model = model
 
+    def _retrying_open(self, req: urllib.request.Request) -> dict:
+        """Open the request with 429-aware backoff retry.
+
+        Free tier CogVideoX-Flash has tight rate limits (~RPM-bounded).
+        On 429 we back off 30/60/90s and retry up to 3 times — the
+        request shape is idempotent on this API so retries are safe.
+        """
+        delays = [30, 60, 90]
+        attempt = 0
+        while True:
+            try:
+                with urllib.request.urlopen(req, timeout=30) as r:
+                    return json.loads(r.read())
+            except urllib.error.HTTPError as e:
+                if e.code == 429 and attempt < len(delays):
+                    sleep_for = delays[attempt]
+                    print(
+                        f"  [cogvideox] 429 rate limit; sleeping {sleep_for}s "
+                        f"(attempt {attempt + 1}/{len(delays)})",
+                        flush=True,
+                    )
+                    time.sleep(sleep_for)
+                    attempt += 1
+                    continue
+                raise
+
     def _post(self, path: str, body: dict) -> dict:
         req = urllib.request.Request(
             f"{BIGMODEL_BASE}{path}",
@@ -72,16 +102,14 @@ class CogVideoXClient:
             data=json.dumps(body).encode("utf-8"),
             method="POST",
         )
-        with urllib.request.urlopen(req, timeout=30) as r:
-            return json.loads(r.read())
+        return self._retrying_open(req)
 
     def _get(self, path: str) -> dict:
         req = urllib.request.Request(
             f"{BIGMODEL_BASE}{path}",
             headers={"Authorization": f"Bearer {self.api_key}"},
         )
-        with urllib.request.urlopen(req, timeout=30) as r:
-            return json.loads(r.read())
+        return self._retrying_open(req)
 
     # ---- public API -------------------------------------------------------
 

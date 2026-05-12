@@ -146,8 +146,15 @@ def call_claude(
 
 def extract_json(s: str) -> dict:
     """Pull a JSON object out of a Claude response. Prefer a fenced
-    ```json ... ``` block; fall back to the first balanced {...}. Runs
-    the embedded-quote sanitizer before json.loads.
+    ```json ... ``` block; fall back to the first balanced {...}.
+
+    Two-pass parse: first run our heuristic embedded-quote sanitiser
+    (handles the common `"some"emphasis"` pattern in narration values),
+    then fall back to `json-repair` for cases the heuristic missed
+    (e.g. embedded `"` followed by `,` which our terminator detector
+    treats ambiguously). json-repair is a battle-tested LLM-output
+    recovery library — uses it as a safety net, not a primary parser,
+    so we keep determinism in the happy path.
     """
     m = JSON_BLOCK_RE.search(s)
     if m:
@@ -157,5 +164,15 @@ def extract_json(s: str) -> dict:
         if not m2:
             raise ValueError("no JSON found in claude output")
         body = m2.group(1)
-    body = _escape_embedded_quotes(body)
-    return json.loads(body)
+    sanitised = _escape_embedded_quotes(body)
+    try:
+        return json.loads(sanitised)
+    except json.JSONDecodeError as e:
+        # Heuristic failed. Try json-repair on the *original* body since
+        # our heuristic may have made things worse by escaping the wrong "
+        try:
+            import json_repair
+            return json_repair.loads(body)
+        except Exception:
+            # Last-ditch: re-raise the first parse error with context
+            raise e

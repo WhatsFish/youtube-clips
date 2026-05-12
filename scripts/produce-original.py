@@ -50,6 +50,7 @@ from pipeline.claude_io import call_claude, extract_json, DEFAULT_MCP_CONFIG, DE
 from pipeline.pexels import PexelsClient, slugify_query
 from pipeline.volcengine import VolcengineClient
 from pipeline.cogvideox import CogVideoXClient
+from pipeline.cogview import CogViewClient
 from pipeline.exemplars import render_exemplars_block, harvest_for_topic
 from pipeline import db, events
 
@@ -301,6 +302,98 @@ def _acquire_one_ai(
     }
 
 
+def _kenburns_image_to_mp4(
+    image_path: Path, out_path: Path, duration_sec: float,
+) -> Path:
+    """Animate a still image to an mp4 using ffmpeg zoompan (Ken Burns).
+
+    Slow zoom-in over the clip duration; output 1920x1080 30fps, no audio.
+    Used to turn a single AI-generated still into a B-roll clip the
+    concat path can splice in just like a Doubao/Pexels video.
+
+    The 25fps zoompan output is then re-rendered to 30fps to match the
+    rest of the pipeline. Slow zoom (target 1.10x over duration) feels
+    natural — too fast and it looks fake; static feels frozen.
+    """
+    frames = max(int(duration_sec * 30), 30)
+    # zoom rate: start at 1.0, end at 1.10 (10% zoom across the clip)
+    zoom_expr = f"zoom+0.0035*if(gte(on,1),1,0)"
+    # Center the zoom; pre-scale source up so zoompan doesn't pixelate
+    vf = (
+        f"scale=3840:2160:force_original_aspect_ratio=increase,"
+        f"crop=3840:2160,"
+        f"zoompan=z='min(zoom+0.0008,1.10)':d={frames}:x='iw/2-(iw/zoom/2)':"
+        f"y='ih/2-(ih/zoom/2)':s=1920x1080:fps=30"
+    )
+    cmd = [
+        "ffmpeg", "-y", "-loglevel", "error",
+        "-loop", "1", "-i", str(image_path),
+        "-vf", vf,
+        "-t", f"{duration_sec:.2f}",
+        "-c:v", "libx264", "-pix_fmt", "yuv420p",
+        "-an",
+        str(out_path),
+    ]
+    subprocess.run(cmd, check=True)
+    return out_path
+
+
+def _acquire_one_image(
+    sh: dict,
+    i: int,
+    query: str,
+    assets_dir: Path,
+    cogview: CogViewClient,
+    run_id: int | None = None,
+) -> dict:
+    """Generate a still via CogView, animate with ken-burns to give B-roll
+    a B-roll a slow zoom-in motion.
+
+    Cost: CogView-3-Flash is free at time of writing. ~5-10s per image
+    vs ~10 minutes for CogVideoX-Flash video gen — dramatically faster
+    when speed matters. Same watermark caveat applies (右下角 「AI 生成」).
+    """
+    from pipeline import cost_log
+    dur = _doubao_duration_for_shot(sh.get("narration"))
+    img_path = assets_dir / f"clip-{i:02d}-image-{slugify_query(query)}.png"
+    target = assets_dir / f"clip-{i:02d}-image-{slugify_query(query)}.mp4"
+    print(f"  s{i:02d} cogview generating ({query!r}) — ~10s...")
+    t0 = time.monotonic()
+    res = cogview.generate(query, size="1280x720")
+    cogview.download(res, img_path)
+    wall_gen = time.monotonic() - t0
+    cost_log.log_event(
+        service="youtube-clips-cogview",
+        provider="zhipu",
+        model=cogview.model,
+        cost_usd=0.0,
+        duration_ms=int(wall_gen * 1000),
+        metadata={
+            "image_id": res.image_id,
+            "size": res.size,
+            "run_id": run_id,
+            "shot_idx": i,
+            "prompt": (query or "")[:500],
+        },
+    )
+    t1 = time.monotonic()
+    _kenburns_image_to_mp4(img_path, target, dur)
+    print(
+        f"  s{i:02d} cogview:{res.image_id[:12]}... → ken-burns {dur}s "
+        f"in {wall_gen:.0f}s gen + {time.monotonic()-t1:.0f}s anim"
+    )
+    return {
+        "video_id": f"cogview-{res.image_id}",
+        "title": query,
+        "channel": "CogView Flash (ken-burns)",
+        "role": "primary" if i == 0 else "supplement",
+        "path": str(target),
+        "duration_sec": dur,
+        "page_url": None,
+        "asset_strategy": "image",
+    }
+
+
 def _ffprobe_seconds(path: Path) -> float:
     """Best-effort duration probe; returns 0.0 if ffprobe unavailable."""
     try:
@@ -320,8 +413,9 @@ def _acquire_assets(
     shots: list[dict],
     assets_dir: Path,
     pexels: PexelsClient,
-    volc: VolcengineClient | None,
+    volc,  # AI video client (CogVideoX or Volcengine) or None
     *,
+    cogview: CogViewClient | None = None,
     global_strategy: str = "hybrid",
     run_id: int | None = None,
 ) -> list[dict]:
@@ -341,35 +435,71 @@ def _acquire_assets(
         if not query:
             sys.exit(f"shot {i}: missing visual_brief_en")
         shot_strategy = (sh.get("asset_strategy") or "pexels").lower()
+        # Map global override → chosen strategy. global_strategy options:
+        # 'pexels' forces all-stock; 'ai' forces all video gen; 'image'
+        # forces all AI image+ken-burns; 'hybrid' (default) honours
+        # whatever the script agent emitted per shot.
         if global_strategy == "pexels":
             chosen = "pexels"
         elif global_strategy == "ai":
             chosen = "ai"
+        elif global_strategy == "image":
+            chosen = "image"
         else:  # hybrid
             chosen = shot_strategy
         events.emit(run_id, "acquire", "start",
                     f"s{i:02d} {chosen}: {query[:60]}",
                     shot_idx=i, strategy=chosen, query=query)
-        if chosen == "ai":
-            if volc is None:
-                print(
-                    f"  s{i:02d} agent asked for AI but VOLC_ARK_API_KEY not set — "
-                    f"falling back to pexels"
-                )
-                src = _acquire_one_pexels(sh, i, query, assets_dir, pexels)
-                events.emit(run_id, "acquire", "done",
-                            f"s{i:02d} fallback pexels:{src.get('video_id')}",
-                            shot_idx=i, video_id=src.get("video_id"))
-            else:
-                src = _acquire_one_ai(sh, i, query, assets_dir, volc, run_id=run_id)
-                events.emit(run_id, "acquire", "done",
-                            f"s{i:02d} doubao:{src.get('video_id')}",
-                            shot_idx=i, video_id=src.get("video_id"))
-        else:
-            src = _acquire_one_pexels(sh, i, query, assets_dir, pexels)
+
+        def _fallback_pexels(reason: str = "") -> dict:
+            if reason:
+                events.emit(run_id, "acquire", "fail",
+                            f"s{i:02d} {reason}", shot_idx=i)
+            s = _acquire_one_pexels(sh, i, query, assets_dir, pexels)
             events.emit(run_id, "acquire", "done",
-                        f"s{i:02d} pexels:{src.get('video_id')}",
-                        shot_idx=i, video_id=src.get("video_id"))
+                        f"s{i:02d} pexels:{s.get('video_id')}",
+                        shot_idx=i, video_id=s.get("video_id"))
+            return s
+
+        if chosen == "image":
+            if cogview is None:
+                print(f"  s{i:02d} asked for image but ZHIPU_API_KEY missing — pexels fallback")
+                src = _fallback_pexels("image unavailable")
+            else:
+                try:
+                    src = _acquire_one_image(
+                        sh, i, query, assets_dir, cogview, run_id=run_id,
+                    )
+                    events.emit(run_id, "acquire", "done",
+                                f"s{i:02d} {src.get('video_id')}",
+                                shot_idx=i, video_id=src.get("video_id"))
+                except Exception as e:
+                    print(
+                        f"  s{i:02d} image gen failed ({type(e).__name__}: {e}); "
+                        f"falling back to pexels", flush=True,
+                    )
+                    src = _fallback_pexels(f"image failed: {e}")
+        elif chosen == "ai":
+            if volc is None:
+                print(f"  s{i:02d} asked for AI video but no client — pexels fallback")
+                src = _fallback_pexels("ai-video unavailable")
+            else:
+                try:
+                    src = _acquire_one_ai(
+                        sh, i, query, assets_dir, volc, run_id=run_id,
+                    )
+                    events.emit(run_id, "acquire", "done",
+                                f"s{i:02d} {src.get('video_id')}",
+                                shot_idx=i, video_id=src.get("video_id"))
+                except Exception as e:
+                    print(
+                        f"  s{i:02d} AI video gen failed ({type(e).__name__}: "
+                        f"{e}); falling back to pexels",
+                        flush=True,
+                    )
+                    src = _fallback_pexels(f"ai-video failed: {e}")
+        else:
+            src = _fallback_pexels()
         sources.append(src)
     return sources
 
@@ -380,12 +510,13 @@ def main() -> int:
     ap.add_argument("--profile", required=True, help="Profile name (must be production_mode=producer)")
     ap.add_argument(
         "--asset-strategy",
-        choices=["pexels", "ai", "hybrid"],
+        choices=["pexels", "ai", "image", "hybrid"],
         default="hybrid",
         help=(
             "How to source per-shot visuals. 'hybrid' (default) respects "
             "the per-shot strategy the script agent chose. 'pexels' forces "
-            "all-stock. 'ai' forces all-Doubao (expensive, ~¥1-2 per 5s)."
+            "all-stock. 'ai' forces all AI-video (slow / costly). 'image' "
+            "forces all AI-still + ken-burns (free, fast)."
         ),
     )
     args = ap.parse_args()
@@ -466,20 +597,23 @@ def main() -> int:
     events.emit(run_id, "assets", "start",
                 f"strategy={args.asset_strategy}, {len(shots)} shots")
     pexels = PexelsClient.from_env()
-    # AI-tier vendor pick: prefer free CogVideoX-Flash when ZHIPU_API_KEY
-    # is configured, fall back to paid Doubao Seedance otherwise.
-    # Operator's KPI is Doubao spend; CogVideoX-Flash is free.
+    # AI-tier vendor pick — two parallel tiers:
+    #   - VIDEO  (`volc`): CogVideoX-Flash (zhipu, free, slow ~10min/clip)
+    #     → fallback to Doubao Seedance (volcengine, paid, fast ~60s)
+    #   - IMAGE  (`cogview`): CogView-3-Flash (zhipu, free, ~10s/image)
+    #     animated to clip via ken-burns. Operator's KPI is Doubao $; cogview
+    #     route gives free, fast, no-watermark-on-burn-in-subtitle B-roll.
     volc = None
     if os.environ.get("ZHIPU_API_KEY"):
         try:
             volc = CogVideoXClient()
-            print(f"  ai vendor: CogVideoX-Flash (zhipu, free)")
+            print(f"  ai-video vendor: CogVideoX-Flash (zhipu, free)")
         except RuntimeError as e:
             print(f"  CogVideoXClient init failed: {e}")
     if volc is None:
         try:
             volc = VolcengineClient()
-            print(f"  ai vendor: Doubao Seedance (volcengine, paid)")
+            print(f"  ai-video vendor: Doubao Seedance (volcengine, paid)")
         except RuntimeError as e:
             if args.asset_strategy == "ai":
                 events.emit(run_id, "assets", "fail", str(e))
@@ -488,8 +622,16 @@ def main() -> int:
                     f"--asset-strategy ai needs ZHIPU_API_KEY or "
                     f"VOLC_ARK_API_KEY: {e}"
                 )
+    cogview = None
+    if os.environ.get("ZHIPU_API_KEY"):
+        try:
+            cogview = CogViewClient()
+            print(f"  ai-image vendor: CogView-3-Flash (zhipu, free)")
+        except RuntimeError as e:
+            print(f"  CogViewClient init failed: {e}")
     sources = _acquire_assets(
         shots, assets_dir, pexels, volc,
+        cogview=cogview,
         global_strategy=args.asset_strategy,
         run_id=run_id,
     )
