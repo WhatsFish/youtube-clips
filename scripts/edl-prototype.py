@@ -65,7 +65,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from pipeline.prompts import load_prompt
 from pipeline.profiles import fetch_profile
-from pipeline.claude_io import call_claude, extract_json
+from pipeline.claude_io import call_claude, extract_json, DEFAULT_MCP_CONFIG, DEFAULT_MCP_TOOLS
 from pipeline.transcript import parse_vtt, format_transcript
 from pipeline.frames import sample_frames, DEFAULT_INTERVAL_SEC as FRAME_INTERVAL_SEC
 from pipeline.exemplars import render_exemplars_block, harvest_for_topic
@@ -530,10 +530,30 @@ def main() -> int:
     stage_label = "Stage 2: write" if analysis is not None else "single-pass"
     print(f"prompt: {len(prompt)} chars → prompt.txt ({stage_label})")
 
+    # Stage 2 writer template v2+ documents MCP tools and instructs the
+    # agent to use them. Auto-detect by template version and enable MCP
+    # transparently — older v1 templates remain text-only.
+    use_tools = (
+        isinstance(prompt_tmpl.version, int) and prompt_tmpl.version >= 2
+    )
     events.emit(run_id, "edl_write", "start", stage_label)
-    print(f"calling claude ({stage_label})...", flush=True)
+    print(
+        f"calling claude ({stage_label})"
+        + ("  [tools: MCP enabled]" if use_tools else "")
+        + "...",
+        flush=True,
+    )
     t0 = time.monotonic()
-    raw = call_claude(prompt)
+    if use_tools:
+        raw = call_claude(
+            prompt,
+            timeout=900,
+            max_turns=12,
+            mcp_config=DEFAULT_MCP_CONFIG,
+            mcp_tools=DEFAULT_MCP_TOOLS,
+        )
+    else:
+        raw = call_claude(prompt)
     elapsed = time.monotonic() - t0
     (job_dir / "raw-claude.txt").write_text(raw, encoding="utf-8")
     print(f"claude returned in {elapsed:.1f}s, {len(raw)} chars")
