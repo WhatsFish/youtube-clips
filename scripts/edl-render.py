@@ -254,11 +254,19 @@ def render_shot(
                 if "if(" in vol_expr
                 else f"[0:a]volume={vol_expr}[bg]"
             )
+        # amix normalize=0 keeps each input at its pre-filter level. Default
+        # normalize=1 attenuates by 1/N (~6 dB for two inputs), which made
+        # narration audibly quieter on shots where the source carried an
+        # audio track (even a silent -91 dB one from Pexels, or Doubao's
+        # AI-generated track) vs shots whose source had no audio stream at
+        # all — operator perceived as 解说忽大忽小. Source levels are already
+        # 0.03-0.10 via vad_expr, so no clipping risk when summed with
+        # narration at 1.6.
         filter_complex = (
             f"[0:v]{vf}[v];"
             f"{bg_filter};"
             f"[1:a]volume={NARR_VOL}[fg];"
-            f"[bg][fg]amix=inputs=2:duration=longest:dropout_transition=0,"
+            f"[bg][fg]amix=inputs=2:duration=longest:dropout_transition=0:normalize=0,"
             f"{apad},aresample=48000[a]"
         )
     else:

@@ -190,6 +190,29 @@ def _acquire_one_pexels(
     }
 
 
+def _strip_audio(mp4: Path) -> None:
+    """Remove the audio track from an mp4 in place.
+
+    Doubao Seedance auto-generates an AI ambient/voice track that leaks
+    under the narration and makes Doubao-backed shots audibly louder
+    than Pexels-backed (silent) shots — operator perceives it as
+    "narration is loud-quiet-loud-quiet" across the timeline. We strip
+    Doubao audio at acquire time so renderer always sees silent sources,
+    same code path as Pexels stock.
+    """
+    tmp = mp4.with_suffix(".muxed.mp4")
+    subprocess.run(
+        [
+            "ffmpeg", "-y", "-loglevel", "error",
+            "-i", str(mp4),
+            "-c:v", "copy", "-an",
+            str(tmp),
+        ],
+        check=True,
+    )
+    tmp.replace(mp4)
+
+
 def _acquire_one_ai(
     sh: dict,
     i: int,
@@ -201,6 +224,8 @@ def _acquire_one_ai(
     """Generate this shot's clip via Doubao Seedance. Use 10s default —
     most narration lines fit under that, and longer means more flexibility
     for tpad-free playback.
+
+    Audio is stripped post-download — see _strip_audio comment.
     """
     target = assets_dir / f"clip-{i:02d}-ai-{slugify_query(query)}.mp4"
     print(f"  s{i:02d} doubao generating ({query!r}) — this takes ~60s...")
@@ -209,8 +234,9 @@ def _acquire_one_ai(
         query, target, duration_sec=10, resolution="720p",
         run_id=run_id, shot_idx=i,
     )
+    _strip_audio(target)
     print(
-        f"  s{i:02d} doubao:{result.task_id} ({result.duration_sec:.0f}s clip) "
+        f"  s{i:02d} doubao:{result.task_id} ({result.duration_sec:.0f}s clip, muted) "
         f"in {time.monotonic()-t0:.0f}s wall"
     )
     return {
