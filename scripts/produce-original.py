@@ -334,6 +334,84 @@ def _acquire_one_ai(
     }
 
 
+def _multi_image_to_mp4(
+    image_paths: list[Path], out_path: Path, total_duration_sec: float,
+) -> Path:
+    """Cross-fade between N ≥ 2 images to fill `total_duration_sec`.
+
+    Each image gets total_dur/N seconds; transitions are 0.5s xfade.
+    Each segment has a *light* ken-burns (1.0 → 1.05) so we don't double
+    up motion on the cross-fade boundary. Used for image shots whose
+    narration is long (≥ ~10s) — one static image + slow zoom over that
+    span feels frozen; 2-3 images cross-fading hides the "still" feel.
+    """
+    n = len(image_paths)
+    if n == 1:
+        return _kenburns_image_to_mp4(image_paths[0], out_path, total_duration_sec)
+    overlap = 0.5
+    # Each segment slightly longer than total/N to leave headroom for xfade
+    seg = (total_duration_sec + overlap * (n - 1)) / n
+    # Build temp clip per image with light ken-burns
+    tmps: list[Path] = []
+    for j, img in enumerate(image_paths):
+        tmp = out_path.with_name(f"{out_path.stem}__part{j}.mp4")
+        frames = max(int(seg * 30), 30)
+        vf = (
+            "scale=3840:2160:force_original_aspect_ratio=increase,"
+            "crop=3840:2160,"
+            f"zoompan=z='min(zoom+0.0004,1.05)':d={frames}:x='iw/2-(iw/zoom/2)':"
+            "y='ih/2-(ih/zoom/2)':s=1920x1080:fps=30"
+        )
+        subprocess.run(
+            [
+                "ffmpeg", "-y", "-loglevel", "error",
+                "-loop", "1", "-i", str(img),
+                "-vf", vf, "-t", f"{seg:.2f}",
+                "-c:v", "libx264", "-pix_fmt", "yuv420p", "-an",
+                str(tmp),
+            ],
+            check=True,
+        )
+        tmps.append(tmp)
+    # Chain xfade: ((((a xfade b) xfade c) ...))
+    # ffmpeg xfade only handles 2 streams at a time — recursively pair.
+    filter_parts = []
+    inputs = []
+    for j, t in enumerate(tmps):
+        inputs.extend(["-i", str(t)])
+    # Build filter graph: [0:v][1:v]xfade=offset=seg-overlap:duration=overlap[v01];[v01][2:v]xfade=offset=2*seg-2*overlap:duration=overlap[v]
+    prev_label = "0:v"
+    accumulated_offset = seg - overlap
+    for j in range(1, n):
+        out_label = "v" if j == n - 1 else f"v{j}"
+        filter_parts.append(
+            f"[{prev_label}][{j}:v]xfade=transition=fade:"
+            f"duration={overlap}:offset={accumulated_offset:.3f}[{out_label}]"
+        )
+        prev_label = out_label
+        accumulated_offset += seg - overlap
+    filter_complex = ";".join(filter_parts)
+    subprocess.run(
+        [
+            "ffmpeg", "-y", "-loglevel", "error",
+            *inputs,
+            "-filter_complex", filter_complex,
+            "-map", "[v]",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-an",
+            "-t", f"{total_duration_sec:.2f}",
+            str(out_path),
+        ],
+        check=True,
+    )
+    # Cleanup tmps
+    for t in tmps:
+        try:
+            t.unlink()
+        except FileNotFoundError:
+            pass
+    return out_path
+
+
 def _kenburns_image_to_mp4(
     image_path: Path, out_path: Path, duration_sec: float,
 ) -> Path:
@@ -408,14 +486,36 @@ def _acquire_one_image(
     than free CogVideoX-Flash video. Same watermark caveat (右下「AI 生成」).
     """
     from pipeline import cost_log
-    dur = _doubao_duration_for_shot(sh.get("narration"))
-    img_path = assets_dir / f"clip-{i:02d}-image-{slugify_query(query)}.png"
+    # Estimate narration duration from chars to decide single vs multi-image.
+    chars = len((sh.get("narration") or "").strip())
+    est_narr_dur = max(5.0, chars / CHARS_PER_SEC + 1.0)
+    if est_narr_dur >= 13.0:
+        n_images = 3
+    elif est_narr_dur >= 8.0:
+        n_images = 2
+    else:
+        n_images = 1
+    # Render duration: full estimated narration (renderer will trim/pad to
+    # actual TTS dur). Cap at 20s to keep ffmpeg fast.
+    render_dur = min(20.0, est_narr_dur)
     target = assets_dir / f"clip-{i:02d}-image-{slugify_query(query)}.mp4"
     enhanced = _enhance_cogview_prompt(query)
-    print(f"  s{i:02d} cogview generating (enhanced from {query[:50]!r}) — ~10s...")
+    print(
+        f"  s{i:02d} cogview generating ({n_images} image{'s' if n_images>1 else ''} "
+        f"for ~{render_dur:.0f}s shot) — {query[:50]!r}..."
+    )
     t0 = time.monotonic()
-    res = cogview.generate(enhanced, size="1280x720")
-    cogview.download(res, img_path)
+    img_paths: list[Path] = []
+    for j in range(n_images):
+        # Each CogView call gets a different random seed → different
+        # image of the same described scene. No prompt modification needed.
+        ip = assets_dir / f"clip-{i:02d}-image-{j}-{slugify_query(query)}.png"
+        res = cogview.generate(enhanced, size="1280x720")
+        cogview.download(res, ip)
+        img_paths.append(ip)
+    # Use first image's task_id as the canonical id; multi has no single id
+    res_for_log = res  # last one for log purposes
+    img_path = img_paths[0]
     wall_gen = time.monotonic() - t0
     cost_log.log_event(
         service="youtube-clips-cogview",
@@ -432,18 +532,24 @@ def _acquire_one_image(
         },
     )
     t1 = time.monotonic()
-    _kenburns_image_to_mp4(img_path, target, dur)
+    if n_images == 1:
+        _kenburns_image_to_mp4(img_path, target, render_dur)
+        channel_label = "CogView Flash (ken-burns)"
+    else:
+        _multi_image_to_mp4(img_paths, target, render_dur)
+        channel_label = f"CogView Flash ({n_images}-img xfade)"
+    anim_sec = time.monotonic() - t1
     print(
-        f"  s{i:02d} cogview:{res.image_id[:12]}... → ken-burns {dur}s "
-        f"in {wall_gen:.0f}s gen + {time.monotonic()-t1:.0f}s anim"
+        f"  s{i:02d} cogview:{res.image_id[:12]}... → {n_images}-img {render_dur:.0f}s "
+        f"in {wall_gen:.0f}s gen + {anim_sec:.0f}s anim"
     )
     return {
         "video_id": f"cogview-{res.image_id}",
         "title": query,
-        "channel": "CogView Flash (ken-burns)",
+        "channel": channel_label,
         "role": "primary" if i == 0 else "supplement",
         "path": str(target),
-        "duration_sec": dur,
+        "duration_sec": render_dur,
         "page_url": None,
         "asset_strategy": "image",
     }

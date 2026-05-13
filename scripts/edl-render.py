@@ -452,6 +452,44 @@ def _ass_escape(text: str) -> str:
     )
 
 
+# Max Chinese characters per subtitle line before we auto-wrap. ASS's
+# native WrapStyle=0 (word-balance) fails on CJK because there are no
+# word boundaries — long sentences just overflow off-screen. We split
+# at Chinese punctuation as the natural breath beat.
+SUBTITLE_MAX_CHARS_PER_LINE = 26
+SUBTITLE_BREAK_CHARS = "，。；：、？！"
+
+
+def _wrap_chinese_subtitle(text: str, max_chars: int = SUBTITLE_MAX_CHARS_PER_LINE) -> str:
+    """Insert `\\N` line breaks into long Chinese narration at punctuation.
+
+    Strategy: walk the string; once we've passed `max_chars` since the
+    last break, the next punctuation char becomes a break point. Yields
+    1-3 lines for any reasonable shanyang-class deep-mode narration
+    (50-90 chars). Falls back to a hard split if no punctuation found.
+    """
+    if len(text) <= max_chars:
+        return text
+    parts: list[str] = []
+    line_start = 0
+    i = 0
+    while i < len(text):
+        # Check if we've crossed the soft threshold and hit a punct char
+        if (i - line_start) >= max_chars and text[i] in SUBTITLE_BREAK_CHARS:
+            parts.append(text[line_start : i + 1])
+            line_start = i + 1
+        i += 1
+    tail = text[line_start:]
+    # If no punctuation triggered a break (rare with shanyang content
+    # since narration always has commas), force a hard split.
+    if not parts:
+        mid = max_chars
+        return text[:mid] + "\\N" + text[mid:]
+    if tail:
+        parts.append(tail)
+    return "\\N".join(s.lstrip() for s in parts)
+
+
 def write_ass_subs(
     shot_durations: list[float],
     shots: list[dict],
@@ -518,7 +556,10 @@ def write_ass_subs(
         # diverge and the subtitle correctly disappears during the
         # breathing pause.
         sub_end = t + narr_dur
-        text = _ass_escape(sh.get("narration", ""))
+        # Order matters: escape first (turns each `\` into `\\`), then
+        # inject `\N` line breaks. If we wrapped first, our `\N` markers
+        # would get doubled to `\\N` by escape and stop working as newlines.
+        text = _wrap_chinese_subtitle(_ass_escape(sh.get("narration", "")))
         events.append(
             f"Dialogue: 0,{_ass_timestamp(t)},{_ass_timestamp(sub_end)},"
             f"Default,,0,0,0,,{text}"
