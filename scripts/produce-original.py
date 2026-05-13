@@ -435,16 +435,20 @@ def _acquire_assets(
         if not query:
             sys.exit(f"shot {i}: missing visual_brief_en")
         shot_strategy = (sh.get("asset_strategy") or "pexels").lower()
-        # Map global override → chosen strategy. global_strategy options:
-        # 'pexels' forces all-stock; 'ai' forces all video gen; 'image'
-        # forces all AI image+ken-burns; 'hybrid' (default) honours
-        # whatever the script agent emitted per shot.
+        # Operator dropped CogView image path 2026-05-13 — quality below
+        # threshold. Old prompts may still emit "image"; silently route to
+        # "ai" so a stale prompt cache doesn't break. Explicit operator
+        # `--asset-strategy image` still works via the global_strategy
+        # branch (kept as backstop for emergencies / debugging).
+        if shot_strategy == "image":
+            shot_strategy = "ai"
+        # Map global override → chosen strategy.
         if global_strategy == "pexels":
             chosen = "pexels"
         elif global_strategy == "ai":
             chosen = "ai"
         elif global_strategy == "image":
-            chosen = "image"
+            chosen = "image"  # explicit force still allowed
         else:  # hybrid
             chosen = shot_strategy
         events.emit(run_id, "acquire", "start",
