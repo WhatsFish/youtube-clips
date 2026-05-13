@@ -63,23 +63,32 @@ notes: |
 
 ## 每个 shot 选素材来源（asset_strategy）
 
-两种来源，**按 ROI 自决**：
+三种来源，**按 ROI 自决**：
 
 - `"pexels"`（通用场景默认）—— Pexels 库存视频，免费 + 即时。偏西方审美，**中文文化具体场景找不到**。
-- `"ai"`（**中国具体场景 / 真实运动需求**）—— Doubao Seedance 1.0-pro-fast，~$0.06/5s clip，~24s 生成。**真视频，有自然运动**，比 ken-burns 假动效自然得多。
+- `"image"`（**静态画面 / 隐喻 / 不需要运动的场景**）—— CogView 文生图 + ken-burns 推拉。免费、~10s 出图、右下小水印。**只适合本质就是静态的画面**：文档 / 招牌 / 静物 / 海报 / 抽象隐喻 / 远景建筑。
+- `"ai"`（**需要真实运动的中文场景**）—— Doubao Seedance 1.0-pro-fast，~$0.06/5s clip，~24s 生成。**真视频，有自然运动**：人物动作 / 街道人流 / 工人作业 / 车流 / 风吹动。
 
 ROI 判断模板：
-- 这个画面**是中文文化具体场景或中国人物**（县城 / 春运 / 工厂 / 招工启事 / 中式厨房 / 农村集市）？
-  → 是 → `ai`（**强约束**：Pexels 找不到真实像的素材，强用就违和）
+- 这个画面**是中文具体场景且需要真实运动**？(人在走 / 车在开 / 工人在做事)
+  → 是 → `ai`（**Doubao 真视频值这个钱**）
   → 否 → 进入下一题
-- 这个画面**有运动**且 Pexels 大概率能搜到（城市街景 / 打字 / 吃饭 / 通用工厂车间）？
+- 这个画面**本质就是静止的 / 抽象概念**？(文档特写 / 招牌 / 数据图 / 隐喻画面 / 远景建筑)
+  → 是 → `image`（CogView + ken-burns 够用，免费）
+  → 否 → 进入下一题
+- 这个画面**有运动但是通用场景**？(城市街景 / 打字 / 吃饭 / 通用工厂)
   → 是 → `pexels`
-  → 否 → 进入下一题
-- 这个画面**是抽象概念 / 隐喻 / 不可拍场景**（数字鸿沟 / 算法画像 / 经济曲线）？
-  → 是 → `ai`（让 Doubao 生成隐喻化画面）
   → 否 → 默认 `pexels`
 
-**不要让一条视频 100% 走 ai**——pexels 的真实拍摄感是平衡 AI 感的关键。理想比例 4-6 个 pexels + 4-6 个 ai。
+**理想比例**：4-6 pexels + 2-3 image + 2-3 ai。不要 100% 任何一档。
+
+## visual_brief_en 怎么写（按 strategy 区别）
+
+- `pexels`: **5-10 个英文关键词**——是搜索词，**不是描述句**。例如 `hands typing keyboard close up office`
+- `ai`: **8-15 个英文关键词**——具体场景描述，Doubao 视频模型会自己加运动。例如 `chinese factory worker blue uniform inspecting electronics assembly line warm light`
+- `image`: **15-25 词的详细描述**——包含主体 + 构图角度 + 光线 + 情绪 + 风格。CogView 出图质量**强烈依赖 prompt 细节**。例如：  
+  - ❌ 太短: `chinese policy document red stamp`  
+  - ✅ 够详细: `close-up of official chinese government policy document with vermilion red stamp impression on cream-colored paper, shallow depth of field, warm desk lamp light from upper left, vintage wood desk surface, documentary photography aesthetic`
 
 ## TTS 兼容硬约束
 
@@ -137,8 +146,8 @@ JSON schema:
   "shots": [
     {{
       "narration": "本 shot 的中文解说",
-      "visual_brief_en": "5-10 英文关键词描述画面",
-      "asset_strategy": "pexels" | "ai",
+      "visual_brief_en": "按 asset_strategy 长度不同，见上方说明",
+      "asset_strategy": "pexels" | "image" | "ai",
       "outline_ref": "对应 OUTLINE.outline 索引（0-based）",
       "purpose": "选这段画面的原因"
     }}

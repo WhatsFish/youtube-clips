@@ -338,6 +338,27 @@ def _kenburns_image_to_mp4(
     return out_path
 
 
+def _enhance_cogview_prompt(visual_brief: str) -> str:
+    """Wrap the agent's visual_brief with quality directives that
+    consistently lift CogView-3-Flash output. Without these the model
+    tends to produce flat, generic, illustration-y images. With them
+    the output trends toward photoreal documentary aesthetic — much
+    better fit for shanyang / world-watching style B-roll.
+
+    Pure additive: we don't rewrite the agent's intent, only append
+    style + technical quality cues.
+    """
+    base = visual_brief.strip().rstrip(".")
+    style = "photorealistic documentary photography, natural lighting"
+    technical = "8k resolution, sharp focus, fine detail, depth of field"
+    if any(kw in base.lower() for kw in ("chinese", "china", "县", "中国")):
+        cultural = "authentic Chinese aesthetic, realistic textures, no stylization"
+    else:
+        cultural = "natural realistic look"
+    negative = "no text overlays, no watermarks, no logos, no cartoon style"
+    return f"{base}. {style}. {cultural}. {technical}. {negative}."
+
+
 def _acquire_one_image(
     sh: dict,
     i: int,
@@ -346,20 +367,22 @@ def _acquire_one_image(
     cogview: CogViewClient,
     run_id: int | None = None,
 ) -> dict:
-    """Generate a still via CogView, animate with ken-burns to give B-roll
-    a B-roll a slow zoom-in motion.
+    """Generate a still via CogView, animate with ken-burns. The agent's
+    visual_brief is augmented with style + technical quality directives
+    (_enhance_cogview_prompt) before submission — CogView quality is very
+    prompt-sensitive and the agent's raw brief is typically too terse.
 
-    Cost: CogView-3-Flash is free at time of writing. ~5-10s per image
-    vs ~10 minutes for CogVideoX-Flash video gen — dramatically faster
-    when speed matters. Same watermark caveat applies (右下角 「AI 生成」).
+    Cost: CogView-3-Flash is free. ~10s per image, dramatically faster
+    than free CogVideoX-Flash video. Same watermark caveat (右下「AI 生成」).
     """
     from pipeline import cost_log
     dur = _doubao_duration_for_shot(sh.get("narration"))
     img_path = assets_dir / f"clip-{i:02d}-image-{slugify_query(query)}.png"
     target = assets_dir / f"clip-{i:02d}-image-{slugify_query(query)}.mp4"
-    print(f"  s{i:02d} cogview generating ({query!r}) — ~10s...")
+    enhanced = _enhance_cogview_prompt(query)
+    print(f"  s{i:02d} cogview generating (enhanced from {query[:50]!r}) — ~10s...")
     t0 = time.monotonic()
-    res = cogview.generate(query, size="1280x720")
+    res = cogview.generate(enhanced, size="1280x720")
     cogview.download(res, img_path)
     wall_gen = time.monotonic() - t0
     cost_log.log_event(
@@ -435,13 +458,6 @@ def _acquire_assets(
         if not query:
             sys.exit(f"shot {i}: missing visual_brief_en")
         shot_strategy = (sh.get("asset_strategy") or "pexels").lower()
-        # Operator dropped CogView image path 2026-05-13 — quality below
-        # threshold. Old prompts may still emit "image"; silently route to
-        # "ai" so a stale prompt cache doesn't break. Explicit operator
-        # `--asset-strategy image` still works via the global_strategy
-        # branch (kept as backstop for emergencies / debugging).
-        if shot_strategy == "image":
-            shot_strategy = "ai"
         # Map global override → chosen strategy.
         if global_strategy == "pexels":
             chosen = "pexels"
