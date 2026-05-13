@@ -10,8 +10,13 @@ set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$PROJECT_ROOT"
 
+# Auto-export so vars are visible to the python subprocess. Without `set -a`
+# the variables only live in this shell — cron-time `python` invocations
+# don't inherit them and KeyError on YOUTUBE_CLIPS_PG_PASSWORD.
+set -a
 # shellcheck disable=SC1091
 source ~/.config/youtube-clips.env
+set +a
 
 echo "=== discover-topics $(date -u +%Y-%m-%dT%H:%M:%SZ) ==="
 .venv/bin/python scripts/discover-topics.py --all
