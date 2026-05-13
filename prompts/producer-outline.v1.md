@@ -41,7 +41,7 @@ notes: |
 - **不写文案**：不要给具体口语化句子（"你别说" 这种是 Stage 2 的事）
 - **不编具体事实**：除非你确信无误，**不要写**"XX 年 X 月发生 XXX 事件"、"某机构调查 87% 受访者..."、引用具体人名说过的话。**通用化表达**："近几年" "许多研究" "业内普遍认为"。
 - **visual_brief_en 必须可被库存视频网站搜到**：抽象概念（"焦虑感" "时代变迁"）要转成**具体场景**（"young person staring at computer late night" / "old buildings being demolished"）。Stage 2 / Pexels acquire 会用这个英文搜素材。
-- **5-7 个 outline 点**：少了撑不起话题，多了散
+- **5-7 个 outline 点**：少了撑不起话题，多了散。**如下方 VIDEO FORMAT 段有覆盖指令（深度模式 8-12），按那里来**。
 
 ## 输出 JSON
 
@@ -66,6 +66,9 @@ JSON schema:
 }}
 
 如果 decision = "skip"（话题不适合做、或风险太大），可省略后续字段，只填 decision_reason_zh。
+
+================ VIDEO FORMAT（频道格式覆盖，若空则用默认 5-7 点） ================
+{video_format_block}
 
 ================ PROFILE ================
 {profile_block}

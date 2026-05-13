@@ -78,6 +78,16 @@ VALUES (
           "max_age_days": 730
         }
       },
+      "video_format": {
+        "depth_mode": "deep",
+        "target_duration_min": "5-8",
+        "outline_points": "8-12",
+        "shots_per_video": "16-22",
+        "pacing": "dense",
+        "inter_shot_pause_sec": 0.0,
+        "explain_unfamiliar_concepts": true,
+        "directive": "shanyang 是优质深度频道：每个论点都要展开（事实/逻辑/例子），不能直接抛结论；非通识概念第一次出现先解释再展开；视频偏长（5-8 min），所以**节奏必须紧凑**，shot 之间几乎不留 pause"
+      },
       "topic_discovery": {
         "feed_ids": ["zhihu_hot", "thepaper_featured", "36kr_latest", "weibo_hot"],
         "include_keywords": [

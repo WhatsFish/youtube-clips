@@ -50,10 +50,11 @@ notes: |
 
 ## 你的工作（写脚本）
 
-1. 把 outline 展开成 8-12 个 shot 的完整中文 narration（每 shot 1 句通顺中文）
-2. 每个 shot 给 visual_brief_en（5-10 个英文关键词），描述这段画面**应该出现什么**——后续从 Pexels / Doubao 取/生成素材
+1. 把 outline 展开成完整中文 narration（每 shot 1 句通顺中文）。**默认 8-12 shot；若下方 VIDEO FORMAT 有覆盖（如深度模式 16-22 shot），按那里来**。
+2. 每个 shot 给 visual_brief_en，描述画面应该出现什么——后续从 Pexels / Doubao 取/生成素材
 3. **顺序自由**：严格按 outline、倒叙、穿插、callback 都行，只要跳跃有叙事意义
-4. **pacing / voice / BGM 自决**：参考 PROFILE.tone
+4. **pacing / voice / BGM 自决**：参考 PROFILE.tone 和 VIDEO FORMAT 的 pacing 建议
+5. **深度模式时**：每个论点都展开（事实/逻辑/例子），不能只抛结论；非通识概念第一次出现先用 1 个 shot 解释再展开
 
 ## 与 commentary/synthesis 的关键区别
 
@@ -185,6 +186,9 @@ JSON schema:
   - 列出来的每条必须能在 tools_used 里找到对应的工具——不能引用没调用过的工具产生的数据。
   - 这是给视频读者看的来源列表，网页 /jobs/<id> 会显示。**编造来源 = 失败**。
 - 如果 narration 提到了具体数字 / 引文 / 事件，**且**这些来自工具调用，必须在 references 里列出来源；如果来自 base knowledge 就不写 references（避免伪造）。
+
+================ VIDEO FORMAT（频道格式覆盖，若空则用默认） ================
+{video_format_block}
 
 ================ PROFILE ================
 {profile_block}

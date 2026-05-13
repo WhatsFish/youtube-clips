@@ -92,6 +92,36 @@ def _save_raw(job_dir: Path, name: str, raw: str) -> None:
     (job_dir / name).write_text(raw, encoding="utf-8")
 
 
+def _video_format_block(channel_cfg: dict) -> str:
+    """Render Profile.channel.video_format as a directive block injected
+    into outline + script prompts. Empty string when not configured (other
+    channels keep their default 2-3 min light-touch shape).
+
+    Used by shanyang-cn to switch from "2-3 min punchy" to "5-8 min deep"
+    mode without forking the prompt files per channel.
+    """
+    vf = (channel_cfg or {}).get("video_format")
+    if not vf:
+        return ""
+    lines = ["**频道视频格式（按此覆盖 prompt 默认）**："]
+    if vf.get("depth_mode") == "deep":
+        lines.append("- 深度模式：每个论点都要展开（事实 / 逻辑 / 例子），不能只抛结论")
+        lines.append("- **非通识概念第一次出现时先解释再展开**——专业术语 / 行业黑话 / 人物 / 事件名都要")
+    if vf.get("target_duration_min"):
+        lines.append(f"- 目标时长：{vf['target_duration_min']} 分钟")
+    if vf.get("outline_points"):
+        lines.append(f"- 大纲点数：{vf['outline_points']}（覆盖默认 5-7）")
+    if vf.get("shots_per_video"):
+        lines.append(f"- 视频 shot 数：{vf['shots_per_video']}（覆盖默认 9-12）")
+    if vf.get("pacing"):
+        lines.append(f"- pacing: {vf['pacing']}")
+    if vf.get("inter_shot_pause_sec") is not None:
+        lines.append(f"- inter_shot_pause_sec: {vf['inter_shot_pause_sec']}（紧凑节奏）")
+    if vf.get("directive"):
+        lines.append(f"- 额外指令: {vf['directive']}")
+    return "\n".join(lines)
+
+
 def _outline(profile, topic: str, job_dir: Path) -> dict:
     # Profile-level override: channel.outline_prompt_name lets a channel
     # use a brief-specific outline template; falls back to default.
@@ -108,6 +138,7 @@ def _outline(profile, topic: str, job_dir: Path) -> dict:
         target_language_label="中文",
         tone_description=ch.get("tone") or "natural and engaged",
         topic=topic,
+        video_format_block=_video_format_block(ch),
     )
     print(f"prompt: {tmpl.stamp} ({len(prompt)} chars)")
     raw = call_claude(prompt)
@@ -155,6 +186,7 @@ def _script(profile, topic: str, outline: dict, job_dir: Path) -> dict:
         topic=topic,
         outline_block=json.dumps(outline, ensure_ascii=False, indent=2),
         style_exemplars_block=render_exemplars_block(ref_bvids),
+        video_format_block=_video_format_block(ch),
     )
     # Stage 2 script writer gets MCP tool access (search_bilibili,
     # read_bilibili_video, fetch_url, fetch_rss_feed) when the template
