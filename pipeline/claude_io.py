@@ -28,11 +28,15 @@ DEFAULT_MCP_TOOLS = [
     "mcp__ytclips__fetch_url",
     "mcp__ytclips__fetch_rss_feed",
     "mcp__ytclips__web_search",
-    "mcp__ytclips__list_recent_videos",
     "mcp__ytclips__preview_pexels",
     "mcp__ytclips__read_image",
     "mcp__ytclips__read_youtube_thumbnail",
+    "mcp__ytclips__search_person_image",
 ]
+# `list_recent_videos` removed from defaults 2026-05-14 per operator —
+# cross-episode callbacks caused factual drift (referenced publish-tier
+# title as if it were actual narration). Operator OK with topic overlap
+# across episodes. Tool stays registered on MCP for future use.
 
 
 def _escape_embedded_quotes(s: str) -> str:

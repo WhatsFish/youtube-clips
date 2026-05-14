@@ -680,6 +680,84 @@ def _publish_one_channel(
     events.emit(run_id, "publish", "done", f"{platform}: {len(cover_paths)} covers")
 
 
+def _acquire_one_person(
+    sh: dict,
+    i: int,
+    assets_dir: Path,
+    run_id: int | None = None,
+) -> dict:
+    """Fetch a real photo of a named person via DDG image search,
+    download top result, ken-burns animate.
+
+    Used when the shot needs to show a specific real-world named person
+    (Kevin Warsh, Powell, 习近平, etc.). Pexels and CogView are both
+    unsuitable — Pexels returns random faces, CogView hallucinates the
+    wrong face (or hits content policy on politicians).
+
+    Required shot fields: `person_name` (the search query). Falls back to
+    Pexels if search returns nothing usable.
+    """
+    from pipeline.tools.person_search import search_person_image
+    import urllib.request
+    name = (sh.get("person_name") or "").strip()
+    if not name:
+        # Agent forgot to fill person_name — fail cleanly so dispatcher
+        # can fall back to pexels for this shot.
+        raise ValueError(f"shot {i}: asset_strategy=person but no person_name set")
+    chars = len((sh.get("narration") or "").strip())
+    est_narr_dur = max(5.0, chars / CHARS_PER_SEC + 1.0)
+    render_dur = min(20.0, est_narr_dur)
+    print(f"  s{i:02d} person search ({name!r}) — ~5s...")
+    t0 = time.monotonic()
+    result = search_person_image(name, max_results=5)
+    hits = result.get("results") or []
+    if not hits:
+        raise RuntimeError(f"shot {i}: person search returned 0 hits for {name!r}")
+    # Pick the first result that downloads cleanly (some image_urls are
+    # behind CDN auth / expired hotlinks; try in order until one works).
+    img_path = assets_dir / f"clip-{i:02d}-person-{slugify_query(name)}.jpg"
+    target = assets_dir / f"clip-{i:02d}-person-{slugify_query(name)}.mp4"
+    downloaded = False
+    chosen_url = None
+    for hit in hits[:5]:
+        url = hit.get("image_url")
+        if not url:
+            continue
+        try:
+            req = urllib.request.Request(url, headers={
+                "User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:126.0) Gecko/20100101 Firefox/126.0",
+                "Accept": "image/*",
+            })
+            with urllib.request.urlopen(req, timeout=20) as r:
+                data = r.read(8 * 1024 * 1024)  # cap 8 MB
+            img_path.write_bytes(data)
+            downloaded = True
+            chosen_url = url
+            break
+        except Exception as e:
+            print(f"    [person] {url[:60]}... failed: {e}", flush=True)
+            continue
+    if not downloaded:
+        raise RuntimeError(f"shot {i}: every person image URL failed to download")
+    # Animate single image with ken-burns (light zoom — face shouldn't whirl)
+    _kenburns_image_to_mp4(img_path, target, render_dur)
+    wall = time.monotonic() - t0
+    print(
+        f"  s{i:02d} person:{slugify_query(name)} → ken-burns {render_dur:.0f}s "
+        f"in {wall:.0f}s"
+    )
+    return {
+        "video_id": f"person-{slugify_query(name)}",
+        "title": name,
+        "channel": "DDG image search (real person)",
+        "role": "primary" if i == 0 else "supplement",
+        "path": str(target),
+        "duration_sec": render_dur,
+        "page_url": chosen_url,
+        "asset_strategy": "person",
+    }
+
+
 def _ffprobe_seconds(path: Path) -> float:
     """Best-effort duration probe; returns 0.0 if ffprobe unavailable."""
     try:
@@ -744,7 +822,19 @@ def _acquire_assets(
                         shot_idx=i, video_id=s.get("video_id"))
             return s
 
-        if chosen == "image":
+        if chosen == "person":
+            try:
+                src = _acquire_one_person(sh, i, assets_dir, run_id=run_id)
+                events.emit(run_id, "acquire", "done",
+                            f"s{i:02d} {src.get('video_id')}",
+                            shot_idx=i, video_id=src.get("video_id"))
+            except Exception as e:
+                print(
+                    f"  s{i:02d} person search failed ({type(e).__name__}: {e}); "
+                    f"falling back to pexels", flush=True,
+                )
+                src = _fallback_pexels(f"person failed: {e}")
+        elif chosen == "image":
             if cogview is None:
                 print(f"  s{i:02d} asked for image but ZHIPU_API_KEY missing — pexels fallback")
                 src = _fallback_pexels("image unavailable")

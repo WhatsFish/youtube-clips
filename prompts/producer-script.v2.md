@@ -36,8 +36,8 @@ notes: |
 - **`read_bilibili_video(bvid, include_transcript=True)`** —— 读一支 b 站视频的 metadata + AI 字幕。研究高赞开场 / 收尾 / 节奏。
 - **`fetch_url(url, max_chars)`** —— 拉公开网页正文（澎湃 / 36氪 / 维基等 static HTML 效果好）。
 - **`fetch_rss_feed(feed_id)`** —— RSS 源最新条目（`zhihu_hot` / `thepaper_featured` / `36kr_latest`）。
-- **`list_recent_videos(profile_name, limit)`** —— **本频道最近 N 期视频的 title + thesis**。用来避免重复角度、做跨期 callback（"上次那期讲县城便利店…"）。`profile_name` 就是本期跑的 Profile slug。
 - **`preview_pexels(query, max_results)`** —— **写 visual_brief_en 前先 verify**：Pexels 真有没有这个画面？没有就直接 emit `asset_strategy="ai"`，不要瞎写 Pexels 让 render 时翻车。
+- **`search_person_image(name)`** —— 搜真实人物照片（DDG 图片）。**仅在你确定要 emit `asset_strategy="person"` 时调来验证有没有合适图**，不是写脚本时随便用。
 - **`read_image(url)`** —— 看任何公开图（web_search 找到的配图、Pexels 缩略图）。决定 visual_brief 是否对得上现实形象时用。
 - **`read_youtube_thumbnail(video_id)`** —— 看 YouTube 视频缩略图。研究同类视频是怎么挂钩子的（视觉层面）。
 
@@ -64,24 +64,28 @@ notes: |
 
 ## 每个 shot 选素材来源（asset_strategy）
 
-三种来源，**按 ROI 自决**：
+四种来源，**按 ROI 自决**：
 
-- `"pexels"`（通用场景默认）—— Pexels 库存视频，免费 + 即时。偏西方审美，**中文文化具体场景找不到**。
-- `"image"`（**静态画面 / 隐喻 / 不需要运动的场景**）—— CogView 文生图 + ken-burns 推拉。免费、~10s 出图、右下小水印。**只适合本质就是静态的画面**：文档 / 招牌 / 静物 / 海报 / 抽象隐喻 / 远景建筑。
-- `"ai"`（**需要真实运动的中文场景**）—— Doubao Seedance 1.0-pro-fast，~$0.06/5s clip，~24s 生成。**真视频，有自然运动**：人物动作 / 街道人流 / 工人作业 / 车流 / 风吹动。
+- `"pexels"`（通用场景默认）—— Pexels 库存视频，免费 + 即时。偏西方审美，**中文文化具体场景找不到**。**绝不能用 pexels 代替具体真实人物**——它返回的"商务人士"是随机外国人脸。
+- `"image"`（**静态画面 / 隐喻 / 不需要运动的场景**）—— CogView 文生图 + ken-burns 推拉。免费、~10s 出图、右下小水印。**只适合本质就是静态的画面**：文档 / 招牌 / 静物 / 海报 / 抽象隐喻 / 远景建筑。**不要用 image 画具体真实人物**——CogView 会画歪、政治人物可能被审核拦。
+- `"ai"`（**需要真实运动的中文场景**）—— Doubao Seedance 1.0-pro-fast，~$0.06/5s clip，~24s 生成。**真视频，有自然运动**：动作 / 人流 / 车流 / 风吹动。**不要用 ai 画具体真实人物**——同样会画歪。
+- **`"person"`（画面要出现具体真实人物时的唯一选项）**—— DDG 图片搜索拿真实公开照片 + ken-burns。**任何有名有姓的真实人物**（鲍威尔、沃什、马斯克、习近平、特朗普、某某 CEO/学者）都**必须**走这一档。schema 多填一个 `person_name` 字段（中文名 / 英文名都行，国际人物用英文搜索效果好）。
 
-ROI 判断模板：
-- 这个画面**是中文具体场景且需要真实运动**？(人在走 / 车在开 / 工人在做事)
+ROI 判断模板（按顺序问）：
+- 画面里要不要**展示具体真实人物的形象**？
+  → 要 → **`person`**（**强约束**：禁止用 pexels/image/ai 代替）
+  → 不要 → 进入下一题
+- 画面**是中文具体场景且需要真实运动**？(人在走 / 车在开 / 工人在做事)
   → 是 → `ai`（**Doubao 真视频值这个钱**）
   → 否 → 进入下一题
-- 这个画面**本质就是静止的 / 抽象概念**？(文档特写 / 招牌 / 数据图 / 隐喻画面 / 远景建筑)
-  → 是 → `image`（CogView + ken-burns 够用，免费）
+- 画面**本质就是静止的 / 抽象概念**？(文档特写 / 招牌 / 数据图 / 隐喻 / 远景建筑)
+  → 是 → `image`
   → 否 → 进入下一题
-- 这个画面**有运动但是通用场景**？(城市街景 / 打字 / 吃饭 / 通用工厂)
+- 画面**有运动但是通用场景**？(城市街景 / 打字 / 吃饭 / 通用工厂)
   → 是 → `pexels`
   → 否 → 默认 `pexels`
 
-**理想比例**：4-6 pexels + 2-3 image + 2-3 ai。不要 100% 任何一档。
+**理想比例**：4-6 pexels + 2-3 image + 1-3 ai + 必要的 person。不要 100% 任何一档。
 
 ## visual_brief_en 怎么写（按 strategy 区别）
 
@@ -148,7 +152,8 @@ JSON schema:
     {{
       "narration": "本 shot 的中文解说",
       "visual_brief_en": "按 asset_strategy 长度不同，见上方说明",
-      "asset_strategy": "pexels" | "image" | "ai",
+      "asset_strategy": "pexels" | "image" | "ai" | "person",
+      "person_name": "（仅当 asset_strategy=person 时填，国际人物用英文）",
       "outline_ref": "对应 OUTLINE.outline 索引（0-based）",
       "purpose": "选这段画面的原因"
     }}
