@@ -80,9 +80,15 @@ NARR_VOL = 1.6
 #               the dead air left by source cutaways without competing
 #               with source-on-camera speech.
 # Levels picked low; narration at 1.6× still dominates by ~10×.
-BGM_VOL_CONSTANT = 0.08
-BGM_VOL_SPEECH = 0.04   # while source is speaking, BGM ducks lower
-BGM_VOL_AMBIENT = 0.10  # while source is silent, BGM fills the gap
+# Raised 2026-05-14 — operator reported BGM 听不见 in producer-mode renders.
+# Old values (0.08/0.04/0.10) were calibrated for commentary mode where
+# source vlogs have their own speech competing; in producer mode the
+# sources are silent (Pexels/CogView/Doubao audio stripped), so BGM at
+# 0.04 sat ~32 dB below narration (NARR_VOL=1.6 ≈ +4 dB) and was
+# effectively inaudible.
+BGM_VOL_CONSTANT = 0.18
+BGM_VOL_SPEECH = 0.10   # while source is speaking, BGM ducks lower
+BGM_VOL_AMBIENT = 0.22  # while source is silent, BGM fills the gap
 
 # Defaults; can be overridden by EDL `voice` / `rate_pct` fields.
 DEFAULT_VOICE = "zh-CN-YunxiNeural"
@@ -397,8 +403,12 @@ def mix_bgm(
         "-i", str(in_path),
         "-stream_loop", "-1", "-i", str(bgm_path),
         "-filter_complex",
+        # normalize=0 keeps each input at its pre-filter level. Without it,
+        # ffmpeg's default amix normalize=1 averages inputs (each ÷ 2),
+        # silently squashing BGM to half the level we set in BGM_VOL_*.
+        # Same fix we applied to the per-shot amix in render_shot.
         f"{bgm_filter};"
-        f"[0:a][bgm]amix=inputs=2:duration=first:dropout_transition=0[a]",
+        f"[0:a][bgm]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[a]",
         "-map", "0:v", "-map", "[a]",
         "-c:v", "copy",
         "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2",
