@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { loadJob, fmtMb, fmtTime, fmtTimestamp, coverPathToUrl, categoryLabel } from "@/lib/jobs";
+import { loadJob, loadJobPlatformVariants, fmtMb, fmtTime, fmtTimestamp, coverPathToUrl, categoryLabel } from "@/lib/jobs";
 import PublishMaterials from "@/components/PublishMaterials";
 
 export const dynamic = "force-dynamic";
@@ -11,7 +11,10 @@ export default async function JobDetail({
   params: { id: string };
 }) {
   const id = decodeURIComponent(params.id);
-  const job = await loadJob(id);
+  const [job, allPlatforms] = await Promise.all([
+    loadJob(id),
+    loadJobPlatformVariants(id),
+  ]);
   if (!job) notFound();
 
   const mediaBase = `/youtube-clips/media/${encodeURIComponent(id)}`;
@@ -79,16 +82,20 @@ export default async function JobDetail({
         </div>
       </section>
 
-      <PublishMaterials
-        platform={job.platform}
-        category={job.category}
-        categoryLabel={categoryLabel(job.category)}
-        title={job.title}
-        description={job.description}
-        tags={job.tags}
-        coverUrls={job.coverPaths.map(coverPathToUrl)}
-        publishUrl={job.publishUrl}
-      />
+      {(allPlatforms.length > 0 ? allPlatforms : [job]).map((variant) => (
+        <PublishMaterials
+          key={variant.platform}
+          platform={variant.platform}
+          category={variant.category}
+          categoryLabel={categoryLabel(variant.category)}
+          title={variant.title}
+          description={variant.description}
+          tags={variant.tags}
+          coverUrls={variant.coverPaths.map(coverPathToUrl)}
+          publishUrl={variant.publishUrl}
+          renderUrl={variant.videoPath ? coverPathToUrl(variant.videoPath) : null}
+        />
+      ))}
 
       {job.edl?.references && job.edl.references.length > 0 ? (
         <section className="mb-6">

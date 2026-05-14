@@ -69,10 +69,10 @@ PROFILE 和 SCRIPT_SUMMARY。
 
 ```json
 {{
-  "bili_title": "...",
-  "bili_description": "...",
-  "bili_tags": ["...", "...", ...],
-  "bili_category": "knowledge.social_law_psychology",
+  "title": "...",
+  "description": "...",
+  "tags": ["...", "...", ...],
+  "category": "knowledge.social_law_psychology",
   "cover_prompts": [
     "english prompt 1 for cover concept A",
     "english prompt 2 for cover concept B",

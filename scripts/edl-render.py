@@ -508,6 +508,9 @@ def write_ass_subs(
     play_h: int = H,
     *,
     narration_durations: list[float] | None = None,
+    margin_v: int = SUBTITLE_MARGIN_V,
+    max_chars_per_line: int = SUBTITLE_MAX_CHARS_PER_LINE,
+    font_size: int = SUBTITLE_SIZE,
 ) -> None:
     """Generate an ASS subtitle file aligned to the concatenated render's
     timeline. Each shot becomes one Dialogue event.
@@ -533,10 +536,10 @@ def write_ass_subs(
         # red CNBC banners during the dry-run frame check. Bold=1 for
         # stroke weight. Alignment=2 (bottom-center). MarginV from the
         # bottom edge of PlayResY.
-        f"Style: Default,{SUBTITLE_FONT},{SUBTITLE_SIZE},"
+        f"Style: Default,{SUBTITLE_FONT},{font_size},"
         "&H00FFFFFF,&H00FFFFFF,&H00000000,&H99000000,"
         "1,0,0,0,100,100,0,0,3,1.5,0,2,"
-        f"60,60,{SUBTITLE_MARGIN_V},1"
+        f"60,60,{margin_v},1"
     )
     header = (
         "[Script Info]\n"
@@ -569,7 +572,10 @@ def write_ass_subs(
         # Order matters: escape first (turns each `\` into `\\`), then
         # inject `\N` line breaks. If we wrapped first, our `\N` markers
         # would get doubled to `\\N` by escape and stop working as newlines.
-        text = _wrap_chinese_subtitle(_ass_escape(sh.get("narration", "")))
+        text = _wrap_chinese_subtitle(
+            _ass_escape(sh.get("narration", "")),
+            max_chars=max_chars_per_line,
+        )
         events.append(
             f"Dialogue: 0,{_ass_timestamp(t)},{_ass_timestamp(sub_end)},"
             f"Default,,0,0,0,,{text}"
@@ -584,6 +590,74 @@ def write_ass_subs(
 # audible "we're done" beat. Applied in burn_subs since that's the only
 # pass guaranteed to run on every render (BGM mix is conditional).
 FINAL_FADE_OUT_SEC = 1.5
+
+
+# ----- multi-platform aspect support ------------------------------------
+# Per-platform render spec. `aspect` = (w, h) target dimensions of the
+# final file. `subtitle_*` overrides scale font / margin / line-wrap for
+# narrower vertical canvases. Add a new platform = add a row here.
+PLATFORM_SPEC: dict[str, dict] = {
+    "bilibili_long": {
+        "aspect": (1280, 720),
+        "subtitle_font_size": 38,
+        "subtitle_margin_v": 110,
+        "subtitle_max_chars": 26,
+        "output_name": "render.mp4",  # back-compat with existing slug-level path
+    },
+    "douyin": {
+        "aspect": (720, 1280),  # 9:16
+        "subtitle_font_size": 42,        # bigger for phone screens
+        "subtitle_margin_v": 260,        # higher off bottom (above Douyin UI)
+        "subtitle_max_chars": 14,        # narrower canvas
+        "output_name": "render-douyin.mp4",
+    },
+    "tiktok": {
+        "aspect": (720, 1280),
+        "subtitle_font_size": 42,
+        "subtitle_margin_v": 260,
+        "subtitle_max_chars": 14,
+        "output_name": "render-tiktok.mp4",
+    },
+    "youtube_long": {
+        "aspect": (1280, 720),
+        "subtitle_font_size": 38,
+        "subtitle_margin_v": 110,
+        "subtitle_max_chars": 26,
+        "output_name": "render-youtube.mp4",
+    },
+    "youtube_shorts": {
+        "aspect": (720, 1280),
+        "subtitle_font_size": 42,
+        "subtitle_margin_v": 260,
+        "subtitle_max_chars": 14,
+        "output_name": "render-shorts.mp4",
+    },
+}
+
+
+def transform_to_vertical(in_path: Path, out_path: Path,
+                          target_w: int = 720, target_h: int = 1280) -> None:
+    """Letterbox transform 16:9 → 9:16 with blurred background fill.
+
+    Background: source scaled to cover target_w×target_h, then heavily
+    blurred — provides a frame-aware backdrop. Foreground: source scaled
+    to target_w wide (keep aspect → ~target_w × 9·target_w/16 tall),
+    centered. The TikTok / Douyin standard layout for repurposed
+    horizontal content; visually clean and lossless of horizontal info.
+    """
+    cmd = [
+        "ffmpeg", "-y", "-loglevel", "error",
+        "-i", str(in_path),
+        "-filter_complex",
+        f"[0:v]split=2[bg_in][fg_in];"
+        f"[bg_in]scale={target_w}:{target_h}:force_original_aspect_ratio=increase,"
+        f"crop={target_w}:{target_h},boxblur=30:2[bg];"
+        f"[fg_in]scale={target_w}:-2[fg];"
+        f"[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1[v]",
+        "-map", "[v]", "-map", "0:a?", "-c:a", "copy",
+        str(out_path),
+    ]
+    subprocess.run(cmd, check=True)
 
 
 def burn_subs(in_path: Path, ass_path: Path, out_path: Path) -> None:
@@ -630,8 +704,21 @@ def main() -> int:
         default=None,
         help="Run id to attach events to (set by produce.py / produce-original.py)",
     )
+    ap.add_argument(
+        "--platforms",
+        default="bilibili_long",
+        help=(
+            "Comma-separated list of platforms to render variants for. "
+            "Each must be a key in PLATFORM_SPEC. Default: bilibili_long. "
+            "Example: --platforms bilibili_long,douyin"
+        ),
+    )
     args = ap.parse_args()
     run_id = args.run_id
+    platforms = [p.strip() for p in args.platforms.split(",") if p.strip()]
+    for p in platforms:
+        if p not in PLATFORM_SPEC:
+            sys.exit(f"unknown platform {p!r}; available: {list(PLATFORM_SPEC)}")
 
     if "AZURE_SPEECH_KEY" not in os.environ:
         sys.exit("source ~/.config/youtube-clips.env first")
@@ -815,54 +902,66 @@ def main() -> int:
         if bgm_mode != "off":
             print(f"[bgm]  unknown mode={bgm_mode!r}, treating as off")
 
-    # Burn Chinese subtitles into the final mp4. The pre-sub artifact
-    # (concat.mp4 or concat-with-bgm.mp4) is kept under _work/ so a
-    # future debug pass can A/B compare; the operator-facing artifact
-    # is render.mp4 (with subs).
     events.emit(run_id, "render_concat", "done", "concat.mp4 written")
-    label = stage("subtitles")
-    events.emit(run_id, "render_subs", "start", "burn ass subs")
-    ass_path = work_dir / "subs.ass"
-    write_ass_subs(
-        shot_durations,
-        shots,
-        ass_path,
-        narration_durations=narration_durations,
-    )
-    out = job_dir / "render.mp4"
-    burn_subs(bgm_input, ass_path, out)
-    done(label)
-    events.emit(run_id, "render_subs", "done", "render.mp4 written")
 
-    overall = time.monotonic() - overall_t0
-    final_dur = ffprobe_duration(out)
-    size_bytes = out.stat().st_size
-    size_mb = size_bytes / 1024 / 1024
-
-    # Persist the Output row. job_id was stamped into edl.json by
-    # edl-prototype.py; if it's missing (legacy EDL pre-DB), skip the
-    # write and let the backfill script catch up.
+    # --- Multi-platform fan-out: one bgm_input → N final renders ---------
+    # Each platform in --platforms gets its own aspect transform (no-op for
+    # 16:9 platforms; letterbox-blur for 9:16) + its own ASS file (different
+    # margin/font/wrap) + its own outputs DB row. Doesn't re-render shots.
     job_id = edl.get("job_id")
-    output_id = None
+    output_ids: list[tuple[str, int | None, Path, float, int]] = []
+    for platform in platforms:
+        spec = PLATFORM_SPEC[platform]
+        tgt_w, tgt_h = spec["aspect"]
+        is_vertical = tgt_h > tgt_w
+        out = job_dir / spec["output_name"]
+        # 1. (vertical only) Transform concat-with-bgm to 9:16 with blur fill
+        if is_vertical:
+            label = stage(f"{platform} vertical transform → {tgt_w}x{tgt_h}")
+            events.emit(run_id, "render_transform", "start", f"{platform} → vertical")
+            vert_pre_subs = work_dir / f"vert-{platform}.mp4"
+            transform_to_vertical(bgm_input, vert_pre_subs, tgt_w, tgt_h)
+            done(label)
+            events.emit(run_id, "render_transform", "done", platform)
+            burn_input = vert_pre_subs
+        else:
+            burn_input = bgm_input
+        # 2. ASS subtitles sized for the platform's canvas
+        label = stage(f"{platform} subtitles")
+        events.emit(run_id, "render_subs", "start", f"burn subs {platform}")
+        ass_path = work_dir / f"subs-{platform}.ass"
+        write_ass_subs(
+            shot_durations, shots, ass_path,
+            play_w=tgt_w, play_h=tgt_h,
+            narration_durations=narration_durations,
+            margin_v=spec["subtitle_margin_v"],
+            max_chars_per_line=spec["subtitle_max_chars"],
+            font_size=spec["subtitle_font_size"],
+        )
+        burn_subs(burn_input, ass_path, out)
+        done(label)
+        events.emit(run_id, "render_subs", "done", f"{platform}: {out.name}")
+        # 3. Persist outputs row per platform
+        out_dur = ffprobe_duration(out)
+        out_size = out.stat().st_size
+        output_id: int | None = None
+        if job_id:
+            output_id = db.insert_output(
+                job_id=job_id,
+                platform=platform,
+                aspect_ratio=f"{tgt_w}:{tgt_h}",
+                language="zh",
+                path=str(out),
+                duration_sec=out_dur,
+                file_size_bytes=out_size,
+                title=edl.get("title_zh"),
+                description=edl.get("description_zh"),
+                tags=edl.get("tags_zh"),
+                status="ready",
+            )
+        output_ids.append((platform, output_id, out, out_dur, out_size))
+
     if job_id:
-        platform = (
-            (edl.get("output", {}) if isinstance(edl.get("output"), dict) else {}).get("platform")
-            or "bilibili_long"
-        )
-        output_id = db.insert_output(
-            job_id=job_id,
-            platform=platform,
-            aspect_ratio="16:9",
-            language="zh",
-            path=str(out),
-            duration_sec=final_dur,
-            file_size_bytes=size_bytes,
-            title=edl.get("title_zh"),
-            description=edl.get("description_zh"),
-            tags=edl.get("tags_zh"),
-            status="ready",
-        )
-        # Mark Job complete now that we have a ready Output.
         with db.cursor() as cur:
             cur.execute(
                 "UPDATE jobs SET status = 'completed', completed_at = NOW() "
@@ -870,15 +969,17 @@ def main() -> int:
                 (job_id,),
             )
 
+    overall = time.monotonic() - overall_t0
     print()
     print("=" * 60)
-    print(f"  output:    {out}")
-    print(f"  duration:  {final_dur:.1f}s ({final_dur/60:.1f} min)")
-    print(f"  size:      {size_mb:.1f} MB")
+    for platform, output_id, out, out_dur, out_size in output_ids:
+        size_mb = out_size / 1024 / 1024
+        print(f"  [{platform}] {out}  {out_dur:.1f}s  {size_mb:.1f} MB"
+              + (f"  output_id={output_id}" if output_id else ""))
     print(f"  shots:     {len(shots)}")
     print(f"  total:     {overall:.1f}s")
-    if output_id:
-        print(f"  db:        job_id={job_id} output_id={output_id}")
+    if job_id:
+        print(f"  db:        job_id={job_id}")
     print("=" * 60)
     return 0
 

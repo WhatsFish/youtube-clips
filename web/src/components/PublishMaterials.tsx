@@ -11,6 +11,7 @@ type Props = {
   tags: string[];
   coverUrls: string[];
   publishUrl: string | null;
+  renderUrl: string | null;  // download / inline-play link to this platform's mp4
 };
 
 const PLATFORM_LABEL: Record<string, string> = {
@@ -51,6 +52,7 @@ export default function PublishMaterials({
   tags,
   coverUrls,
   publishUrl,
+  renderUrl,
 }: Props) {
   const platformLabel = PLATFORM_LABEL[platform] ?? platform;
   const tagsString = tags.join(", ");
@@ -62,20 +64,33 @@ export default function PublishMaterials({
 
   return (
     <section className="mb-8 border border-neutral-200 dark:border-neutral-800 rounded-md">
-      <header className="px-4 py-2.5 border-b border-neutral-200 dark:border-neutral-800 flex items-baseline justify-between">
+      <header className="px-4 py-2.5 border-b border-neutral-200 dark:border-neutral-800 flex items-baseline justify-between gap-2 flex-wrap">
         <h2 className="text-sm font-semibold">{platformLabel} 发布信息</h2>
-        {publishUrl ? (
-          <a
-            href={publishUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="text-xs underline text-green-700 dark:text-green-400"
-          >
-            已发布 ↗
-          </a>
-        ) : (
-          <span className="text-xs text-neutral-500">未发布</span>
-        )}
+        <div className="flex items-baseline gap-3 text-xs">
+          {renderUrl ? (
+            <a
+              href={renderUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="underline text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100"
+              download
+            >
+              下载视频 ↓
+            </a>
+          ) : null}
+          {publishUrl ? (
+            <a
+              href={publishUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="underline text-green-700 dark:text-green-400"
+            >
+              已发布 ↗
+            </a>
+          ) : (
+            <span className="text-neutral-500">未发布</span>
+          )}
+        </div>
       </header>
 
       <div className="p-4 space-y-4">

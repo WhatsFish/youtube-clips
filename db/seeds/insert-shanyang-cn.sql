@@ -86,6 +86,14 @@ VALUES (
           "cover_size": "1280x800",
           "cover_count": 4,
           "publish_prompt": "publish-bilibili"
+        },
+        {
+          "platform": "douyin",
+          "render_aspect": "9:16",
+          "cover_aspect": "9:16",
+          "cover_size": "1024x1920",
+          "cover_count": 4,
+          "publish_prompt": "publish-douyin"
         }
       ],
       "video_format": {

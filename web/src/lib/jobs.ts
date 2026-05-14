@@ -85,6 +85,7 @@ export type Job = {
   category: string | null;        // platform-specific category id
   publishUrl: string | null;
   publishedAt: Date | null;
+  videoPath: string | null;       // filesystem path of the mp4 (outputs.path)
 };
 
 type Row = {
@@ -109,6 +110,7 @@ type Row = {
   category: string | null;
   publish_url: string | null;
   published_at: Date | null;
+  path: string | null;
 };
 
 // One render = one Output row. But re-running edl-render.py overwrites
@@ -144,6 +146,7 @@ const SELECT_RENDERS = `
       o.category        AS category,
       o.publish_url     AS publish_url,
       o.published_at    AS published_at,
+      o.path            AS path,
       j.edl_jsonb       AS edl_jsonb,
       COALESCE(jsonb_array_length(j.edl_jsonb -> 'shots'), 0) AS shot_count,
       ROW_NUMBER() OVER (
@@ -196,6 +199,7 @@ function rowToJob(r: Row): Job {
     category: r.category,
     publishUrl: r.publish_url,
     publishedAt: r.published_at,
+    videoPath: r.path,
   };
 }
 
@@ -231,6 +235,50 @@ export async function loadJob(id: string): Promise<Job | null> {
   );
   if (rows.length === 0) return null;
   return rowToJob(rows[0]);
+}
+
+/** Load ALL outputs rows for a given slug — one per platform variant.
+ *  Used by the detail page to render a PublishMaterials section per
+ *  platform (bilibili + douyin + ...). The CTE in SELECT_RENDERS already
+ *  partitions by platform, so each platform's latest row surfaces. */
+export async function loadJobPlatformVariants(id: string): Promise<Job[]> {
+  // We need ALL platform variants, not just one — drop the WHERE rn=1
+  // filter for this query by doing a fresh SELECT against outputs/jobs.
+  const sql = `
+    SELECT
+      o.id              AS output_id,
+      o.job_id          AS job_id,
+      s.external_id     AS external_id,
+      j.edl_jsonb ->> 'url_slug' AS url_slug,
+      p.name            AS profile_name,
+      o.title           AS title,
+      o.description     AS description,
+      o.tags            AS tags,
+      o.platform        AS platform,
+      o.aspect_ratio    AS aspect_ratio,
+      o.language        AS language,
+      o.duration_sec    AS duration_sec,
+      o.file_size_bytes AS file_size_bytes,
+      o.ready_at        AS ready_at,
+      o.cover_paths     AS cover_paths,
+      o.category        AS category,
+      o.publish_url     AS publish_url,
+      o.published_at    AS published_at,
+      o.path            AS path,
+      j.edl_jsonb       AS edl_jsonb,
+      COALESCE(jsonb_array_length(j.edl_jsonb -> 'shots'), 0) AS shot_count,
+      '1'::text         AS render_count
+    FROM outputs o
+    JOIN jobs     j ON j.id = o.job_id
+    JOIN profiles p ON p.id = j.profile_id
+    LEFT JOIN sources s
+         ON s.id = NULLIF(j.edl_jsonb ->> 'source_id', '')::bigint
+    WHERE o.status = 'ready'
+      AND ($1 IN (j.edl_jsonb ->> 'url_slug', s.external_id))
+    ORDER BY o.platform
+  `;
+  const rows = await query<Row>(sql, [id]);
+  return rows.map(rowToJob);
 }
 
 // nginx /youtube-clips/media/ alias → /video/youtube-clips/outputs/edl-prototype/

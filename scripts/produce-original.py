@@ -656,6 +656,8 @@ def _publish_one_channel(
 
     # Find the outputs row for this platform; update it. Use UPDATE because
     # render path already INSERTed; just enrich with publish materials.
+    # Generic field names across publish-* prompts (bilibili/douyin/...)
+    # — all v1 prompts emit {title, description, tags, category, cover_prompts}.
     with db.cursor() as cur:
         cur.execute(
             """
@@ -668,10 +670,10 @@ def _publish_one_channel(
             WHERE job_id = %s AND platform = %s
             """,
             (
-                materials.get("bili_title"),
-                materials.get("bili_description"),
-                materials.get("bili_tags") or [],
-                materials.get("bili_category"),
+                materials.get("title"),
+                materials.get("description"),
+                materials.get("tags") or [],
+                materials.get("category"),
                 cover_paths,
                 job_id, platform,
             ),
@@ -1116,17 +1118,24 @@ def main() -> int:
                 f"job_id={job_id} sources={len(source_db_ids)}",
                 job_id=job_id, topic_id=topic_id)
 
-    # 6. Render.
+    # 6. Render — fan out to every platform listed in publish_channels.
     _stage("render")
-    events.emit(run_id, "render", "start", f"{len(shots)} shots")
+    publish_channels = (
+        (profile.config or {}).get("channel", {}).get("publish_channels") or []
+    )
+    platforms = [c["platform"] for c in publish_channels if c.get("platform")] \
+                or ["bilibili_long"]
+    events.emit(run_id, "render", "start",
+                f"{len(shots)} shots → platforms: {','.join(platforms)}")
     cmd = [
         str(PROJECT_ROOT / ".venv" / "bin" / "python"),
         str(PROJECT_ROOT / "scripts" / "edl-render.py"),
         "--run-id", str(run_id or ""),
+        "--platforms", ",".join(platforms),
         "--", slug,
     ]
     subprocess.run(cmd, check=True)
-    events.emit(run_id, "render", "done", "render.mp4 written")
+    events.emit(run_id, "render", "done", f"{len(platforms)} platform(s)")
 
     # 7. Publish materials — per channel in Profile.publish_channels[].
     # Generates platform-specific title/description/tags/category + N cover
