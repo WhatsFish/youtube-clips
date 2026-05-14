@@ -114,6 +114,13 @@ CREATE TABLE IF NOT EXISTS outputs (
   title           TEXT,                            -- per-platform title (different vibes)
   description     TEXT,
   tags            TEXT[]       NOT NULL DEFAULT '{}',
+  -- Per-platform publish materials (Phase 1 = B站; future = 抖音/YouTube).
+  -- cover_paths is N candidate cover image files; operator picks one when
+  -- uploading. category is platform-specific (B站 "分区" / 抖音 channel).
+  cover_paths     TEXT[]       NOT NULL DEFAULT '{}',
+  category        TEXT,
+  publish_url     TEXT,                            -- public URL once operator uploads
+  published_at    TIMESTAMPTZ,
   status          TEXT         NOT NULL DEFAULT 'pending'
     CHECK (status IN ('pending','rendering','ready','failed')),
   created_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW(),

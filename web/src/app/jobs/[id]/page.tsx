@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { loadJob, fmtMb, fmtTime, fmtTimestamp } from "@/lib/jobs";
+import { loadJob, fmtMb, fmtTime, fmtTimestamp, coverPathToUrl, categoryLabel } from "@/lib/jobs";
+import PublishMaterials from "@/components/PublishMaterials";
 
 export const dynamic = "force-dynamic";
 
@@ -78,23 +79,16 @@ export default async function JobDetail({
         </div>
       </section>
 
-      {job.tags.length > 0 ? (
-        <section className="mb-8">
-          <h2 className="text-xs font-semibold uppercase tracking-wider text-neutral-500 mb-2">
-            tags
-          </h2>
-          <div className="flex flex-wrap gap-2">
-            {job.tags.map((t) => (
-              <span
-                key={t}
-                className="text-xs px-2 py-1 bg-neutral-100 dark:bg-neutral-800 rounded"
-              >
-                {t}
-              </span>
-            ))}
-          </div>
-        </section>
-      ) : null}
+      <PublishMaterials
+        platform={job.platform}
+        category={job.category}
+        categoryLabel={categoryLabel(job.category)}
+        title={job.title}
+        description={job.description}
+        tags={job.tags}
+        coverUrls={job.coverPaths.map(coverPathToUrl)}
+        publishUrl={job.publishUrl}
+      />
 
       {job.edl?.references && job.edl.references.length > 0 ? (
         <section className="mb-6">

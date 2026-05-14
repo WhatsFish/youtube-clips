@@ -78,6 +78,13 @@ export type Job = {
   aspectRatio: string;
   language: string;
   renderCount: number;            // total Outputs ever produced for this (source, profile)
+  // Per-platform publish materials (Stage 3 output).
+  // For multi-platform fan-out this becomes an array; right now there's
+  // only ever one outputs row per job (bilibili_long), so flat fields are fine.
+  coverPaths: string[];           // filesystem paths to cover candidates
+  category: string | null;        // platform-specific category id
+  publishUrl: string | null;
+  publishedAt: Date | null;
 };
 
 type Row = {
@@ -98,6 +105,10 @@ type Row = {
   shot_count: number;
   render_count: string;  // Postgres COUNT(*) returns a bigint; pg lib gives us a string
   url_slug: string | null;  // producer mode stamps a readable slug; null for commentary/synthesis
+  cover_paths: string[] | null;
+  category: string | null;
+  publish_url: string | null;
+  published_at: Date | null;
 };
 
 // One render = one Output row. But re-running edl-render.py overwrites
@@ -129,6 +140,10 @@ const SELECT_RENDERS = `
       o.duration_sec    AS duration_sec,
       o.file_size_bytes AS file_size_bytes,
       o.ready_at        AS ready_at,
+      o.cover_paths     AS cover_paths,
+      o.category        AS category,
+      o.publish_url     AS publish_url,
+      o.published_at    AS published_at,
       j.edl_jsonb       AS edl_jsonb,
       COALESCE(jsonb_array_length(j.edl_jsonb -> 'shots'), 0) AS shot_count,
       ROW_NUMBER() OVER (
@@ -177,6 +192,10 @@ function rowToJob(r: Row): Job {
     aspectRatio: r.aspect_ratio,
     language: r.language,
     renderCount: parseInt(r.render_count ?? "1", 10) || 1,
+    coverPaths: r.cover_paths ?? [],
+    category: r.category,
+    publishUrl: r.publish_url,
+    publishedAt: r.published_at,
   };
 }
 
@@ -212,6 +231,35 @@ export async function loadJob(id: string): Promise<Job | null> {
   );
   if (rows.length === 0) return null;
   return rowToJob(rows[0]);
+}
+
+// nginx /youtube-clips/media/ alias → /video/youtube-clips/outputs/edl-prototype/
+const MEDIA_FS_PREFIX = "/video/youtube-clips/outputs/edl-prototype/";
+const MEDIA_URL_PREFIX = "/youtube-clips/media/";
+
+/** Convert a server-side cover_path (filesystem) into a browser-fetchable URL. */
+export function coverPathToUrl(p: string): string {
+  if (p.startsWith(MEDIA_FS_PREFIX)) {
+    const tail = p.slice(MEDIA_FS_PREFIX.length);
+    const [slug, ...rest] = tail.split("/");
+    return MEDIA_URL_PREFIX + encodeURIComponent(slug) + "/" + rest.join("/");
+  }
+  // Already a URL or unknown shape; return as-is
+  return p;
+}
+
+const BILIBILI_CATEGORY_LABEL: Record<string, string> = {
+  "knowledge.social_law_psychology": "知识 · 社科·法律·心理",
+  "knowledge.humanities_history": "知识 · 人文历史",
+  "knowledge.science": "知识 · 科学科普",
+  "knowledge.finance_business": "知识 · 财经商业",
+  "news.current_affairs": "资讯 · 时事",
+  "news.tech": "资讯 · 科技",
+};
+
+export function categoryLabel(cat: string | null): string {
+  if (!cat) return "—";
+  return BILIBILI_CATEGORY_LABEL[cat] ?? cat;
 }
 
 export function fmtMb(bytes: number | null): string {

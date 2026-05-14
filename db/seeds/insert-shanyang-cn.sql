@@ -78,6 +78,16 @@ VALUES (
           "max_age_days": 730
         }
       },
+      "publish_channels": [
+        {
+          "platform": "bilibili_long",
+          "render_aspect": "16:9",
+          "cover_aspect": "16:10",
+          "cover_size": "1280x800",
+          "cover_count": 4,
+          "publish_prompt": "publish-bilibili"
+        }
+      ],
       "video_format": {
         "depth_mode": "deep",
         "target_duration_min": "5-8",

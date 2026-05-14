@@ -555,6 +555,131 @@ def _acquire_one_image(
     }
 
 
+def _generate_publish_materials(
+    *,
+    profile,
+    edl: dict,
+    job_id: int,
+    job_dir: Path,
+    run_id: int | None = None,
+) -> None:
+    """Stage 3 — per-channel publishing materials + cover candidates.
+
+    Reads Profile.channel.publish_channels[], for each platform:
+    1. Renders the publish prompt (publish-<platform>.v1) with EDL summary
+    2. Calls Claude → gets platform title/description/tags/category +
+       N cover prompts
+    3. Calls CogView N times to generate cover images at platform aspect
+    4. INSERTs/UPDATEs the outputs row with title/desc/tags/category/
+       cover_paths for that platform
+
+    Idempotent: safe to re-run; cover files are overwritten in place.
+    Falls back silently per-channel on failure (one bad platform doesn't
+    nuke the others).
+    """
+    cfg = (profile.config or {}).get("channel") or {}
+    channels = cfg.get("publish_channels") or []
+    if not channels:
+        return
+
+    events.emit(run_id, "publish", "start", f"{len(channels)} channel(s)")
+    print(f"\n──── publish materials {'─' * 39}")
+
+    for ch_cfg in channels:
+        platform = ch_cfg.get("platform")
+        if not platform:
+            continue
+        try:
+            _publish_one_channel(
+                profile=profile, edl=edl, job_id=job_id, job_dir=job_dir,
+                channel_cfg=ch_cfg, run_id=run_id,
+            )
+        except Exception as e:
+            print(f"  [publish:{platform}] failed: {e}", flush=True)
+            events.emit(run_id, "publish", "fail", f"{platform}: {e}")
+
+    events.emit(run_id, "publish", "done", "")
+
+
+def _publish_one_channel(
+    *,
+    profile,
+    edl: dict,
+    job_id: int,
+    job_dir: Path,
+    channel_cfg: dict,
+    run_id: int | None = None,
+) -> None:
+    platform = channel_cfg["platform"]
+    prompt_name = channel_cfg.get("publish_prompt") or f"publish-{platform.split('_')[0]}"
+    cover_count = int(channel_cfg.get("cover_count") or 4)
+    cover_size = channel_cfg.get("cover_size") or "1280x800"
+
+    # Render shots summary for the prompt
+    shots_summary = "\n".join(
+        f"  shot{i:02d}: {sh.get('narration','')[:90]}"
+        for i, sh in enumerate(edl.get("shots") or [])
+    )
+
+    tmpl = load_prompt(prompt_name, version="latest")
+    tags_zh = edl.get("tags_zh") or []
+    prompt = tmpl.render(
+        profile_block=profile.render_block(),
+        title_zh=edl.get("title_zh") or "",
+        thesis_zh=edl.get("thesis_zh") or "",
+        description_zh=edl.get("description_zh") or "",
+        tags_zh=", ".join(tags_zh) if tags_zh else "(none)",
+        shots_summary=shots_summary,
+    )
+    print(f"  [{platform}] calling claude ({tmpl.stamp})...")
+    events.emit(run_id, "publish", "info", f"{platform}: claude call")
+    raw = call_claude(prompt, timeout=180)
+    materials = extract_json(raw)
+
+    # Generate cover candidates via CogView at the platform's aspect
+    from pipeline.cogview import CogViewClient
+    cogview = CogViewClient()
+    covers_dir = job_dir / f"covers-{platform}"
+    covers_dir.mkdir(exist_ok=True)
+    cover_prompts = (materials.get("cover_prompts") or [])[:cover_count]
+    cover_paths: list[str] = []
+    for j, cp in enumerate(cover_prompts):
+        print(f"  [{platform}] cover {j+1}/{len(cover_prompts)}...")
+        try:
+            enhanced = _enhance_cogview_prompt(cp)
+            res = cogview.generate(enhanced, size=cover_size)
+            out = covers_dir / f"cover-{j+1}.png"
+            cogview.download(res, out)
+            cover_paths.append(str(out))
+        except Exception as e:
+            print(f"    cover gen failed: {e}")
+
+    # Find the outputs row for this platform; update it. Use UPDATE because
+    # render path already INSERTed; just enrich with publish materials.
+    with db.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE outputs SET
+                title       = COALESCE(%s, title),
+                description = COALESCE(%s, description),
+                tags        = %s,
+                category    = COALESCE(%s, category),
+                cover_paths = %s
+            WHERE job_id = %s AND platform = %s
+            """,
+            (
+                materials.get("bili_title"),
+                materials.get("bili_description"),
+                materials.get("bili_tags") or [],
+                materials.get("bili_category"),
+                cover_paths,
+                job_id, platform,
+            ),
+        )
+    print(f"  [{platform}] {len(cover_paths)} covers + materials saved")
+    events.emit(run_id, "publish", "done", f"{platform}: {len(cover_paths)} covers")
+
+
 def _ffprobe_seconds(path: Path) -> float:
     """Best-effort duration probe; returns 0.0 if ffprobe unavailable."""
     try:
@@ -912,6 +1037,18 @@ def main() -> int:
     ]
     subprocess.run(cmd, check=True)
     events.emit(run_id, "render", "done", "render.mp4 written")
+
+    # 7. Publish materials — per channel in Profile.publish_channels[].
+    # Generates platform-specific title/description/tags/category + N cover
+    # candidates. Best-effort: failure doesn't kill the produce pipeline,
+    # operator can re-run /scripts/generate-publish.py for missed ones.
+    try:
+        _generate_publish_materials(
+            profile=profile, edl=edl, job_id=job_id, job_dir=job_dir, run_id=run_id,
+        )
+    except Exception as e:
+        print(f"  [publish] generation failed (non-fatal): {e}", flush=True)
+        events.emit(run_id, "publish", "fail", str(e))
 
     elapsed = time.monotonic() - overall_t0
     render_path = job_dir / "render.mp4"
