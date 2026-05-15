@@ -134,9 +134,11 @@ function ApprovedTopicRow({
   variant: "waiting" | "rendered";
 }) {
   const isRendered = variant === "rendered";
+  // next/link auto-prepends basePath; don't hardcode "/youtube-clips/"
+  // here or it becomes /youtube-clips/youtube-clips/jobs/... → 404.
   const link =
     isRendered && topic.renderedSlug
-      ? `/youtube-clips/jobs/${encodeURIComponent(topic.renderedSlug)}`
+      ? `/jobs/${encodeURIComponent(topic.renderedSlug)}`
       : null;
   const body = (
     <div className="flex items-baseline gap-2 flex-wrap">

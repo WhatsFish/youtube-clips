@@ -19,8 +19,10 @@ export default async function RunDetail({
     loadRunCost(runId),
   ]);
 
+  // next/link auto-prepends basePath ("/youtube-clips"); don't add it
+  // manually or you get /youtube-clips/youtube-clips/... → 404.
   const jobHref = run.urlSlug
-    ? `/youtube-clips/jobs/${encodeURIComponent(run.urlSlug)}`
+    ? `/jobs/${encodeURIComponent(run.urlSlug)}`
     : null;
 
   return (
