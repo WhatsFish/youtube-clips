@@ -89,12 +89,25 @@ CREATE TABLE IF NOT EXISTS jobs (
   edl_jsonb      JSONB,                            -- nullable until the EDL agent runs
   parent_job_id  BIGINT       REFERENCES jobs(id) ON DELETE SET NULL,
   status         TEXT         NOT NULL DEFAULT 'pending'
-    CHECK (status IN ('pending','planning','rendering','completed','failed')),
+    CHECK (status IN ('pending','planning','script_draft','rendering','completed','failed','rejected')),
+  -- Operator's review feedback (free-form). Filled when status='rejected'
+  -- (operator wants a rewrite) or accompanying a manual edit.
+  feedback       TEXT,
+  -- When the operator approved the script for rendering. NULL on a job
+  -- that auto-rendered without a review gate.
+  script_approved_at TIMESTAMPTZ,
   error_jsonb    JSONB,
   created_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
   started_at     TIMESTAMPTZ,
   completed_at   TIMESTAMPTZ
 );
+-- Idempotent ALTERs so existing DBs catch up to the column additions without
+-- requiring a fresh CREATE. Safe to re-run.
+ALTER TABLE jobs DROP CONSTRAINT IF EXISTS jobs_status_check;
+ALTER TABLE jobs ADD CONSTRAINT jobs_status_check
+  CHECK (status IN ('pending','planning','script_draft','rendering','completed','failed','rejected'));
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS feedback TEXT;
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS script_approved_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS jobs_topic_status ON jobs (topic_id, status, created_at DESC);
 CREATE INDEX IF NOT EXISTS jobs_status_created ON jobs (status, created_at DESC);
 

@@ -2,10 +2,12 @@ import Link from "next/link";
 import { query } from "@/lib/db";
 import {
   listJobs,
+  listDraftJobs,
   groupByProfile,
   fmtMb,
   fmtTime,
   type Job,
+  type DraftJob,
 } from "@/lib/jobs";
 import { listActiveRuns, listRecentFailures, loadRecentCost } from "@/lib/runs";
 import { countPendingTopics } from "@/lib/topics";
@@ -45,8 +47,9 @@ export default async function Home() {
     dbError = e instanceof Error ? e.message : String(e);
   }
 
-  const [jobs, activeRuns, recentFailures, recentCost, pendingTopics] = await Promise.all([
+  const [jobs, drafts, activeRuns, recentFailures, recentCost, pendingTopics] = await Promise.all([
     listJobs(),
+    listDraftJobs(),
     listActiveRuns(),
     listRecentFailures(5),
     loadRecentCost(24),
@@ -83,6 +86,16 @@ export default async function Home() {
                 <span className="font-medium">{pendingTopics}</span>
               </Link>
             )}
+            {drafts.filter((d) => d.status === "script_draft" && !d.scriptApprovedAt).length > 0 && (
+              <span className="text-amber-700 dark:text-amber-400">
+                <span className="uppercase tracking-wider text-neutral-500">
+                  待审批文案
+                </span>{" "}
+                <span className="font-medium">
+                  {drafts.filter((d) => d.status === "script_draft" && !d.scriptApprovedAt).length}
+                </span>
+              </span>
+            )}
             {recentCost.doubaoCalls > 0 && (
               <div className="text-neutral-500 text-right">
                 <div className="uppercase tracking-wider">
@@ -110,6 +123,8 @@ export default async function Home() {
         initialActive={activeRuns}
         recentFailures={recentFailures}
       />
+
+      {drafts.length > 0 ? <DraftsSection drafts={drafts} /> : null}
 
       {profiles.length === 0 && jobs.length === 0 ? (
         <div className="border border-dashed border-neutral-300 dark:border-neutral-700 rounded-md p-6 text-sm text-neutral-500">
@@ -139,6 +154,59 @@ export default async function Home() {
         />
       ))}
     </main>
+  );
+}
+
+function DraftsSection({ drafts }: { drafts: DraftJob[] }) {
+  return (
+    <section className="mb-10">
+      <header className="mb-3 flex items-baseline gap-3">
+        <h2 className="font-mono text-base font-semibold">文案 review 队列</h2>
+        <span className="text-xs text-neutral-500">
+          {drafts.length} {drafts.length === 1 ? "draft" : "drafts"}
+        </span>
+      </header>
+      <ul className="space-y-2">
+        {drafts.map((d) => (
+          <li
+            key={d.jobId}
+            className="border border-neutral-200 dark:border-neutral-800 rounded-md hover:bg-neutral-100 dark:hover:bg-neutral-900 transition"
+          >
+            <Link
+              href={`/jobs/${encodeURIComponent(d.slug)}/review`}
+              className="block p-3"
+            >
+              <div className="flex items-baseline gap-2 mb-1">
+                <span className="font-medium text-sm">
+                  {d.edl.title_zh ?? d.topicTitle}
+                </span>
+                <DraftStatusPill draft={d} />
+              </div>
+              <div className="text-xs text-neutral-500 flex flex-wrap gap-x-4 gap-y-1">
+                <span>{d.edl.shots?.length ?? 0} shots</span>
+                <span className="font-mono">{d.profileName}</span>
+                <span>{fmtTime(d.createdAt)}</span>
+              </div>
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function DraftStatusPill({ draft }: { draft: DraftJob }) {
+  let label = "待审批";
+  let cls = "bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300";
+  if (draft.status === "rejected") {
+    label = "已驳回";
+    cls = "bg-red-100 dark:bg-red-950 text-red-800 dark:text-red-300";
+  } else if (draft.scriptApprovedAt) {
+    label = "approved · 等渲染";
+    cls = "bg-blue-100 dark:bg-blue-950 text-blue-800 dark:text-blue-300";
+  }
+  return (
+    <span className={`text-xs px-1.5 py-0.5 rounded ${cls}`}>{label}</span>
   );
 }
 

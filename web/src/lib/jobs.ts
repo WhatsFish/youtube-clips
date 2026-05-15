@@ -5,6 +5,10 @@ export type Shot = {
   source_start_sec: number;
   source_idx?: number;  // present from EDL prompt v4 onward; defaults to 0 (primary)
   purpose?: string;
+  visual_brief_en?: string;
+  asset_strategy?: string;       // producer-mode v2+: per-shot pexels|ai|image|person
+  person_name?: string;          // when asset_strategy=person
+  outline_ref?: string;
 };
 
 export type EdlSource = {
@@ -45,7 +49,11 @@ export type Edl = {
   // / "synthesis" all use the legacy YouTube path.
   production_mode?: "commentary" | "synthesis" | "producer";
   prompt_template_version?: string;
+  url_slug?: string;          // producer mode: human-readable slug = on-disk dir name
   rendered_at?: string;
+  thesis_zh?: string;
+  pacing?: { tier?: string; inter_shot_pause_sec?: number; reason_zh?: string };
+  bgm?: { mode?: string; mood?: string; reason_zh?: string };
   topic_id?: number;
   source_id?: number;        // primary source's DB id (always set)
   source_ids?: number[];     // v4+: every source's DB id, primary first
@@ -279,6 +287,106 @@ export async function loadJobPlatformVariants(id: string): Promise<Job[]> {
   `;
   const rows = await query<Row>(sql, [id]);
   return rows.map(rowToJob);
+}
+
+/** A draft job (status='script_draft' or 'rejected') — exists in `jobs`
+ *  but has no `outputs` row yet, so the regular SELECT_RENDERS query
+ *  (which inner-joins outputs) won't find it. Used by /jobs/[id]/review. */
+export type DraftJob = {
+  jobId: number;
+  status: "script_draft" | "rejected" | "rendering" | "completed" | "failed";
+  slug: string;                       // edl_jsonb.url_slug
+  profileName: string;
+  topicTitle: string;
+  edl: Edl;
+  feedback: string | null;            // operator's last reject comment
+  scriptApprovedAt: Date | null;      // when operator clicked approve
+  createdAt: Date;
+};
+
+export async function loadDraftJob(slug: string): Promise<DraftJob | null> {
+  const sql = `
+    SELECT
+      j.id          AS job_id,
+      j.status      AS status,
+      j.edl_jsonb   AS edl_jsonb,
+      j.feedback    AS feedback,
+      j.script_approved_at AS script_approved_at,
+      j.created_at  AS created_at,
+      p.name        AS profile_name,
+      t.title       AS topic_title
+    FROM jobs j
+    JOIN profiles p ON p.id = j.profile_id
+    JOIN topics   t ON t.id = j.topic_id
+    WHERE j.edl_jsonb ->> 'url_slug' = $1
+    ORDER BY j.created_at DESC
+    LIMIT 1
+  `;
+  const rows = await query<{
+    job_id: number;
+    status: string;
+    edl_jsonb: Edl;
+    feedback: string | null;
+    script_approved_at: Date | null;
+    created_at: Date;
+    profile_name: string;
+    topic_title: string;
+  }>(sql, [slug]);
+  if (rows.length === 0) return null;
+  const r = rows[0];
+  return {
+    jobId: r.job_id,
+    status: r.status as DraftJob["status"],
+    slug,
+    profileName: r.profile_name,
+    topicTitle: r.topic_title,
+    edl: r.edl_jsonb,
+    feedback: r.feedback,
+    scriptApprovedAt: r.script_approved_at,
+    createdAt: r.created_at,
+  };
+}
+
+/** List all jobs awaiting review (status='script_draft' AND not yet
+ *  approved) plus those the operator rejected. Used on the home page. */
+export async function listDraftJobs(): Promise<DraftJob[]> {
+  const sql = `
+    SELECT
+      j.id          AS job_id,
+      j.status      AS status,
+      j.edl_jsonb   AS edl_jsonb,
+      j.feedback    AS feedback,
+      j.script_approved_at AS script_approved_at,
+      j.created_at  AS created_at,
+      p.name        AS profile_name,
+      t.title       AS topic_title
+    FROM jobs j
+    JOIN profiles p ON p.id = j.profile_id
+    JOIN topics   t ON t.id = j.topic_id
+    WHERE j.status IN ('script_draft','rejected')
+    ORDER BY j.created_at DESC
+  `;
+  const rows = await query<{
+    job_id: number;
+    status: string;
+    edl_jsonb: Edl;
+    feedback: string | null;
+    script_approved_at: Date | null;
+    created_at: Date;
+    profile_name: string;
+    topic_title: string;
+  }>(sql);
+  return rows.map((r) => ({
+    jobId: r.job_id,
+    status: r.status as DraftJob["status"],
+    slug: r.edl_jsonb?.url_slug ?? `job-${r.job_id}`,
+    profileName: r.profile_name,
+    topicTitle: r.topic_title,
+    edl: r.edl_jsonb,
+    feedback: r.feedback,
+    scriptApprovedAt: r.script_approved_at,
+    createdAt: r.created_at,
+  }));
 }
 
 // nginx /youtube-clips/media/ alias → /video/youtube-clips/outputs/edl-prototype/

@@ -879,54 +879,30 @@ def _acquire_assets(
     return sources
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--topic", required=True, help="What this video is about")
-    ap.add_argument("--profile", required=True, help="Profile name (must be production_mode=producer)")
-    ap.add_argument(
-        "--asset-strategy",
-        choices=["pexels", "ai", "image", "hybrid"],
-        default="hybrid",
-        help=(
-            "How to source per-shot visuals. 'hybrid' (default) respects "
-            "the per-shot strategy the script agent chose. 'pexels' forces "
-            "all-stock. 'ai' forces all AI-video (slow / costly). 'image' "
-            "forces all AI-still + ken-burns (free, fast)."
-        ),
-    )
-    args = ap.parse_args()
+def _run_phase_script(*, profile, topic: str) -> dict:
+    """Phase 1: outline + script → INSERT draft job (status='script_draft').
 
-    overall_t0 = time.monotonic()
-
-    # 0. Profile guardrail — only producer-mode Profiles drive this script.
-    profile = fetch_profile(args.profile)
-    mode = ((profile.config or {}).get("channel") or {}).get("production_mode")
-    if mode != "producer":
-        sys.exit(
-            f"Profile {profile.name!r} has production_mode={mode!r}; "
-            f"this script only runs on producer-mode Profiles. "
-            f"For commentary/synthesis, use produce.py."
-        )
-    print(f"profile: {profile.name} (mode={mode})")
-
-    slug = slug_for_job(args.topic)
+    Returns either {skip: True, reason} (when the prompt decided to skip)
+    or a full dict with run_id / job_id / slug / job_dir / edl / shots /
+    topic_id for either inline continuation (stage=all) or operator
+    review on web (stage=script).
+    """
+    slug = slug_for_job(topic)
     job_dir = OUT_BASE / slug
     job_dir.mkdir(parents=True, exist_ok=True)
-    assets_dir = ASSETS_BASE / slug
 
     run_id = events.start_run(
         profile_id=profile.id,
         kind="producer",
-        topic_title=args.topic,
+        topic_title=topic,
         url_slug=slug,
     )
     events.register_atexit(run_id)
     print(f"run_id: {run_id}")
 
-    # 1. Outline.
     _stage("outline")
     events.emit(run_id, "outline", "start", "Stage 1: thesis + outline")
-    outline = _outline(profile, args.topic, job_dir)
+    outline = _outline(profile, topic, job_dir)
     (job_dir / "outline.json").write_text(
         json.dumps(outline, ensure_ascii=False, indent=2), encoding="utf-8"
     )
@@ -935,17 +911,15 @@ def main() -> int:
         print(f"outline returned skip: {reason}")
         events.emit(run_id, "outline", "skip", reason)
         events.finish_run(run_id, "skipped", reason)
-        return 1
+        return {"skip": True, "reason": reason}
     print(f"thesis: {outline.get('thesis_zh')}")
     print(f"outline points: {len(outline.get('outline', []))}")
-    events.emit(run_id, "outline", "done",
-                outline.get("thesis_zh"),
+    events.emit(run_id, "outline", "done", outline.get("thesis_zh"),
                 points=len(outline.get("outline", [])))
 
-    # 2. Script.
     _stage("script")
     events.emit(run_id, "script", "start", "Stage 2: shot narration")
-    script = _script(profile, args.topic, outline, job_dir)
+    script = _script(profile, topic, outline, job_dir)
     (job_dir / "script.json").write_text(
         json.dumps(script, ensure_ascii=False, indent=2), encoding="utf-8"
     )
@@ -954,7 +928,7 @@ def main() -> int:
         print(f"script returned skip: {reason}")
         events.emit(run_id, "script", "skip", reason)
         events.finish_run(run_id, "skipped", reason)
-        return 1
+        return {"skip": True, "reason": reason}
     shots = script.get("shots") or []
     if not shots:
         events.emit(run_id, "script", "fail", "script returned no shots")
@@ -966,20 +940,156 @@ def main() -> int:
                 voice=script.get("voice"),
                 pacing=(script.get("pacing") or {}).get("tier"))
 
-    # 3. Acquire assets — Pexels stock and/or Doubao AI per the agent's
-    #    per-shot decision (overridable via --asset-strategy).
-    _stage(f"assets ({args.asset_strategy})")
+    # Script-only EDL — sources[] empty; Phase 2 fills in after asset acquire.
+    # We keep the agent's per-shot asset_strategy + person_name so Phase 2
+    # has everything it needs without re-running Claude.
+    edl_shots = []
+    for i, sh in enumerate(shots):
+        edl_shots.append({
+            "narration": sh["narration"],
+            "source_idx": i,
+            "source_start_sec": 0,
+            "outline_ref": sh.get("outline_ref"),
+            "purpose": sh.get("purpose"),
+            "visual_brief_en": sh.get("visual_brief_en"),
+            "asset_strategy": sh.get("asset_strategy"),
+            "person_name": sh.get("person_name"),
+        })
+    edl = {
+        "decision": "make",
+        "production_mode": "producer",
+        "url_slug": slug,
+        "thesis_zh": script.get("thesis_zh") or outline.get("thesis_zh"),
+        "title_zh": script.get("title_zh"),
+        "description_zh": script.get("description_zh"),
+        "tags_zh": script.get("tags_zh") or [],
+        "pacing": script.get("pacing") or {"tier": "normal", "inter_shot_pause_sec": 0.8, "reason_zh": "default"},
+        "bgm": script.get("bgm") or {"mode": "off", "mood": "neutral", "reason_zh": "default"},
+        "sources": [],
+        "shots": edl_shots,
+        "profile_name": profile.name,
+        "prompt_template_version": "producer-script.v1",
+    }
+    if script.get("references"):
+        edl["references"] = script["references"]
+    if script.get("tools_used"):
+        edl["tools_used"] = script["tools_used"]
+    _po = (profile.config or {}).get("output") or {}
+    voice_from_script = script.get("voice")
+    rate_from_script = script.get("rate_pct")
+    if voice_from_script:
+        edl["voice"] = voice_from_script
+    elif _po.get("tts_voice"):
+        edl["voice"] = _po["tts_voice"]
+    if rate_from_script is not None:
+        edl["rate_pct"] = rate_from_script
+    elif _po.get("tts_rate_pct") is not None:
+        edl["rate_pct"] = _po["tts_rate_pct"]
+
+    topic_id = db.upsert_topic(
+        profile_id=profile.id,
+        title=topic,
+        description=edl.get("description_zh"),
+        keywords=edl.get("tags_zh"),
+        status="approved",
+        source="human",
+    )
+    edl["topic_id"] = topic_id
+
+    job_id = db.insert_job(
+        topic_id=topic_id,
+        profile_id=profile.id,
+        edl_jsonb=edl,
+        status="script_draft",
+    )
+    edl["job_id"] = job_id
+    with db.cursor() as cur:
+        cur.execute(
+            "UPDATE jobs SET edl_jsonb = edl_jsonb || jsonb_build_object('job_id', %s::bigint) WHERE id = %s",
+            (job_id, job_id),
+        )
+    events.attach_topic(run_id, topic_id)
+    events.attach_job(run_id, job_id)
+
+    (job_dir / "edl.json").write_text(
+        json.dumps(edl, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    print(f"edl saved: {job_dir / 'edl.json'}")
+    print(f"db: topic_id={topic_id} job_id={job_id} status=script_draft")
+    events.emit(run_id, "script_draft", "done",
+                f"job_id={job_id} (awaiting operator review)",
+                job_id=job_id, topic_id=topic_id)
+
+    return {
+        "skip": False,
+        "run_id": run_id,
+        "job_id": job_id,
+        "topic_id": topic_id,
+        "slug": slug,
+        "job_dir": job_dir,
+        "profile": profile,
+        "edl": edl,
+        "shots": shots,
+    }
+
+
+def _run_phase_render(*, job_id: int, asset_strategy: str = "hybrid") -> int:
+    """Phase 2: acquire assets → render → publish materials.
+
+    Resumes from a draft job (status='script_draft' or 'rejected'). Loads
+    profile + topic + EDL from DB, runs the asset acquire path, persists
+    sources, updates the EDL, renders, generates publish materials. Marks
+    the job 'rendering' → 'completed' (or 'failed').
+
+    Idempotent within reason: re-running on a 'completed' job re-acquires
+    assets and re-renders (the operator might want fresh visuals).
+    """
+    with db.cursor() as cur:
+        cur.execute("""
+          SELECT j.id, j.status, j.topic_id, j.profile_id, j.edl_jsonb,
+                 p.name AS profile_name, t.title AS topic_title
+            FROM jobs j
+            JOIN profiles p ON p.id = j.profile_id
+            JOIN topics t ON t.id = j.topic_id
+           WHERE j.id = %s
+        """, (job_id,))
+        row = cur.fetchone()
+    if not row:
+        sys.exit(f"job {job_id} not found")
+
+    profile = fetch_profile(row["profile_name"])
+    edl = dict(row["edl_jsonb"] or {})
+    slug = edl.get("url_slug") or f"job-{job_id}"
+    topic = row["topic_title"]
+    job_dir = OUT_BASE / slug
+    job_dir.mkdir(parents=True, exist_ok=True)
+    assets_dir = ASSETS_BASE / slug
+    shots = edl.get("shots") or []
+    if not shots:
+        sys.exit(f"job {job_id}'s EDL has no shots; nothing to render")
+
+    overall_t0 = time.monotonic()
+    run_id = events.start_run(
+        profile_id=profile.id,
+        kind="producer",
+        topic_title=topic,
+        url_slug=slug,
+    )
+    events.register_atexit(run_id)
+    events.attach_topic(run_id, row["topic_id"])
+    events.attach_job(run_id, job_id)
+    print(f"run_id: {run_id} (Phase 2: render for job {job_id})")
+
+    with db.cursor() as cur:
+        cur.execute(
+            "UPDATE jobs SET status='rendering', started_at=COALESCE(started_at, NOW()) WHERE id=%s",
+            (job_id,),
+        )
+
+    _stage(f"assets ({asset_strategy})")
     events.emit(run_id, "assets", "start",
-                f"strategy={args.asset_strategy}, {len(shots)} shots")
+                f"strategy={asset_strategy}, {len(shots)} shots")
     pexels = PexelsClient.from_env()
-    # AI-tier vendor pick — two parallel tiers:
-    #   - VIDEO  (`volc`): Doubao Seedance 1.0-pro-fast (volcengine, paid
-    #     ~$0.06/5s clip but FAST ~24s wall). Re-promoted to primary on
-    #     2026-05-13 — previous CogVideoX-Flash free path was unbearably
-    #     slow (~10min/clip). CogVideoX kept as last-resort fallback.
-    #   - IMAGE  (`cogview`): CogView-3-Flash (zhipu, free, ~10s/image)
-    #     animated to clip via ken-burns. Cheap path for shots where a
-    #     still suffices (no real motion needed).
     volc = None
     try:
         volc = VolcengineClient()
@@ -994,12 +1104,12 @@ def main() -> int:
                 )
             except RuntimeError as e2:
                 print(f"  CogVideoXClient init failed: {e2}")
-    if volc is None and args.asset_strategy == "ai":
+    if volc is None and asset_strategy == "ai":
         events.emit(run_id, "assets", "fail", "no ai-video vendor available")
         events.finish_run(run_id, "failed", "no ai-video vendor available")
-        sys.exit(
-            "--asset-strategy ai needs VOLC_ARK_API_KEY or ZHIPU_API_KEY"
-        )
+        with db.cursor() as cur:
+            cur.execute("UPDATE jobs SET status='failed' WHERE id=%s", (job_id,))
+        sys.exit("--asset-strategy ai needs VOLC_ARK_API_KEY or ZHIPU_API_KEY")
     cogview = None
     if os.environ.get("ZHIPU_API_KEY"):
         try:
@@ -1007,65 +1117,15 @@ def main() -> int:
             print(f"  ai-image vendor: CogView-3-Flash (zhipu, free)")
         except RuntimeError as e:
             print(f"  CogViewClient init failed: {e}")
+
     sources = _acquire_assets(
         shots, assets_dir, pexels, volc,
         cogview=cogview,
-        global_strategy=args.asset_strategy,
+        global_strategy=asset_strategy,
         run_id=run_id,
     )
     events.emit(run_id, "assets", "done", f"{len(sources)} sources ready")
 
-    # 4. Assemble EDL. Each shot points at its own freshly-downloaded
-    # clip via source_idx; source_start_sec stays 0 (each clip plays
-    # from its beginning).
-    edl_shots = []
-    for i, sh in enumerate(shots):
-        edl_shots.append({
-            "narration": sh["narration"],
-            "source_idx": i,
-            "source_start_sec": 0,
-            "outline_ref": sh.get("outline_ref"),
-            "purpose": sh.get("purpose"),
-            "visual_brief_en": sh.get("visual_brief_en"),
-        })
-
-    edl = {
-        "decision": "make",
-        "production_mode": "producer",
-        # Web URL routing key. Commentary/synthesis modes inherit the
-        # primary source's external_id (a YouTube video id) which
-        # doubles as the on-disk directory name; producer mode has no
-        # YouTube id, so we stamp the human-readable job slug here and
-        # the web layer prefers this over sources[0].external_id.
-        "url_slug": slug,
-        "thesis_zh": script.get("thesis_zh") or outline.get("thesis_zh"),
-        "title_zh": script.get("title_zh"),
-        "description_zh": script.get("description_zh"),
-        "tags_zh": script.get("tags_zh") or [],
-        "pacing": script.get("pacing") or {"tier": "normal", "inter_shot_pause_sec": 0.8, "reason_zh": "default"},
-        "bgm": script.get("bgm") or {"mode": "off", "mood": "neutral", "reason_zh": "default"},
-        "sources": sources,
-        "shots": edl_shots,
-        "profile_name": profile.name,
-        "prompt_template_version": "producer-script.v1",
-        "rendered_at": dt.datetime.now(dt.timezone.utc).isoformat(),
-    }
-    # Voice/rate_pct fallback chain — same as edl-prototype: EDL > Profile > renderer default
-    _po = (profile.config or {}).get("output") or {}
-    voice_from_script = script.get("voice")
-    rate_from_script = script.get("rate_pct")
-    if voice_from_script:
-        edl["voice"] = voice_from_script
-    elif _po.get("tts_voice"):
-        edl["voice"] = _po["tts_voice"]
-    if rate_from_script is not None:
-        edl["rate_pct"] = rate_from_script
-    elif _po.get("tts_rate_pct") is not None:
-        edl["rate_pct"] = _po["tts_rate_pct"]
-
-    # 5. Persist Topic + Job + Source rows.
-    # `external_id` for producer sources is `pexels-<id>` — not a YouTube
-    # id but treated the same by the DB schema (source_platform="pexels").
     source_db_ids: list[int] = []
     for s in sources:
         sid = db.upsert_source(
@@ -1081,44 +1141,24 @@ def main() -> int:
             downloaded=True,
         )
         source_db_ids.append(sid)
-    topic_id = db.upsert_topic(
-        profile_id=profile.id,
-        title=args.topic,
-        description=edl.get("description_zh"),
-        keywords=edl.get("tags_zh"),
-        status="approved",
-        source="human",
-    )
-    edl["topic_id"] = topic_id
+    edl["sources"] = sources
     edl["source_id"] = source_db_ids[0] if source_db_ids else None
     edl["source_ids"] = source_db_ids
+    edl["rendered_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
 
-    job_id = db.insert_job(
-        topic_id=topic_id,
-        profile_id=profile.id,
-        edl_jsonb=edl,
-        status="planning",
-    )
-    edl["job_id"] = job_id
     with db.cursor() as cur:
         cur.execute(
-            "UPDATE jobs SET edl_jsonb = edl_jsonb || jsonb_build_object('job_id', %s::bigint) WHERE id = %s",
-            (job_id, job_id),
+            "UPDATE jobs SET edl_jsonb = %s::jsonb WHERE id = %s",
+            (json.dumps(edl, ensure_ascii=False), job_id),
         )
-
-    events.attach_topic(run_id, topic_id)
-    events.attach_job(run_id, job_id)
-
     (job_dir / "edl.json").write_text(
         json.dumps(edl, ensure_ascii=False, indent=2), encoding="utf-8"
     )
-    print(f"edl saved: {job_dir / 'edl.json'}")
-    print(f"db: topic_id={topic_id} source_ids={source_db_ids} job_id={job_id}")
+    print(f"edl updated: {len(sources)} sources")
     events.emit(run_id, "edl_persist", "done",
-                f"job_id={job_id} sources={len(source_db_ids)}",
-                job_id=job_id, topic_id=topic_id)
+                f"sources={len(source_db_ids)}",
+                sources=len(source_db_ids))
 
-    # 6. Render — fan out to every platform listed in publish_channels.
     _stage("render")
     publish_channels = (
         (profile.config or {}).get("channel", {}).get("publish_channels") or []
@@ -1137,10 +1177,6 @@ def main() -> int:
     subprocess.run(cmd, check=True)
     events.emit(run_id, "render", "done", f"{len(platforms)} platform(s)")
 
-    # 7. Publish materials — per channel in Profile.publish_channels[].
-    # Generates platform-specific title/description/tags/category + N cover
-    # candidates. Best-effort: failure doesn't kill the produce pipeline,
-    # operator can re-run /scripts/generate-publish.py for missed ones.
     try:
         _generate_publish_materials(
             profile=profile, edl=edl, job_id=job_id, job_dir=job_dir, run_id=run_id,
@@ -1149,11 +1185,17 @@ def main() -> int:
         print(f"  [publish] generation failed (non-fatal): {e}", flush=True)
         events.emit(run_id, "publish", "fail", str(e))
 
+    with db.cursor() as cur:
+        cur.execute(
+            "UPDATE jobs SET status='completed', completed_at=NOW() WHERE id=%s",
+            (job_id,),
+        )
+
     elapsed = time.monotonic() - overall_t0
     render_path = job_dir / "render.mp4"
     print()
     print("=" * 60)
-    print(f"  produce-original complete: {slug}")
+    print(f"  produce-render complete: {slug}")
     print(f"  shots:  {len(shots)}")
     print(f"  edl:    {job_dir / 'edl.json'}")
     print(f"  render: {render_path}")
@@ -1165,6 +1207,80 @@ def main() -> int:
     print("=" * 60)
     events.finish_run(run_id, "completed")
     return 0
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument(
+        "--stage", choices=["all", "script", "render"], default="all",
+        help=(
+            "Which phase(s) to run. 'all' (default) = legacy one-shot: "
+            "outline → script → assets → render → publish in one process. "
+            "'script' = stop after outline+script with status='script_draft'; "
+            "operator reviews on web before authorizing render. "
+            "'render' = resume from an existing draft job by --job-id "
+            "(used by the web approve handler)."
+        ),
+    )
+    ap.add_argument("--topic", help="What this video is about (stage=all|script)")
+    ap.add_argument("--profile", help="Profile name (stage=all|script). Must be production_mode=producer.")
+    ap.add_argument("--job-id", type=int, help="Job id to resume (stage=render)")
+    ap.add_argument(
+        "--asset-strategy",
+        choices=["pexels", "ai", "image", "hybrid"],
+        default="hybrid",
+        help=(
+            "How to source per-shot visuals. 'hybrid' (default) respects "
+            "the per-shot strategy the script agent chose. 'pexels' forces "
+            "all-stock. 'ai' forces all AI-video (slow / costly). 'image' "
+            "forces all AI-still + ken-burns (free, fast)."
+        ),
+    )
+    args = ap.parse_args()
+
+    if args.stage == "render":
+        if not args.job_id:
+            sys.exit("--stage render requires --job-id")
+        return _run_phase_render(job_id=args.job_id, asset_strategy=args.asset_strategy)
+
+    # stage = all | script — both need topic + profile
+    if not args.topic or not args.profile:
+        sys.exit(f"--stage {args.stage} requires --topic and --profile")
+
+    profile = fetch_profile(args.profile)
+    mode = ((profile.config or {}).get("channel") or {}).get("production_mode")
+    if mode != "producer":
+        sys.exit(
+            f"Profile {profile.name!r} has production_mode={mode!r}; "
+            f"this script only runs on producer-mode Profiles. "
+            f"For commentary/synthesis, use produce.py."
+        )
+    print(f"profile: {profile.name} (mode={mode})")
+
+    result = _run_phase_script(profile=profile, topic=args.topic)
+    if result.get("skip"):
+        return 1
+
+    if args.stage == "script":
+        slug = result["slug"]
+        events.finish_run(result["run_id"], "completed")
+        print()
+        print("=" * 60)
+        print(f"  produce-script (Phase 1) complete: {slug}")
+        print(f"  shots:    {len(result['shots'])}")
+        print(f"  job_id:   {result['job_id']}")
+        print(f"  status:   script_draft (awaiting review)")
+        print(
+            f"  review:   https://ai-native.japaneast.cloudapp.azure.com/"
+            f"youtube-clips/jobs/{slug}/review"
+        )
+        print("=" * 60)
+        return 0
+
+    # stage = all → continue inline into render phase
+    return _run_phase_render(job_id=result["job_id"], asset_strategy=args.asset_strategy)
+
+
 
 
 if __name__ == "__main__":
