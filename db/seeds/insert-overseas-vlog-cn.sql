@@ -55,7 +55,49 @@ VALUES (
         "让我们一起",
         "重磅"
       ],
-      "must_include_disclaimer": false
+      "must_include_disclaimer": false,
+      "topic_discovery": {
+        "youtube_queries": [
+          "USA suburb daily life vlog day in the life",
+          "UK London daily routine vlog",
+          "Germany Berlin everyday life vlog",
+          "France Paris daily life vlog",
+          "Italy daily life vlog day in the life",
+          "Spain Madrid Barcelona daily vlog",
+          "Sweden Stockholm daily routine vlog",
+          "Netherlands Amsterdam daily life",
+          "Canada Toronto Vancouver daily vlog",
+          "Australia Sydney Melbourne daily life",
+          "Japan Tokyo Osaka daily life vlog",
+          "Korea Seoul daily life vlog",
+          "Singapore daily routine vlog",
+          "Mexico daily life day in the life vlog",
+          "Brazil daily life vlog"
+        ],
+        "exclude_keywords": [
+          "shorts only", "TikTok compilation", "reaction video",
+          "tourist trap", "luxury hotel tour"
+        ],
+        "max_picks": 8
+      },
+      "publish_channels": [
+        {
+          "platform": "bilibili_long",
+          "render_aspect": "16:9",
+          "cover_aspect": "16:10",
+          "cover_size": "1280x800",
+          "cover_count": 4,
+          "publish_prompt": "publish-bilibili"
+        },
+        {
+          "platform": "douyin",
+          "render_aspect": "9:16",
+          "cover_aspect": "9:16",
+          "cover_size": "1024x1920",
+          "cover_count": 4,
+          "publish_prompt": "publish-douyin"
+        }
+      ]
     },
     "topic_generation_prompt": "你为一个面向中文受众的「海外日常生活观察」频道选题。候选话题应当聚焦最近 1-2 周内 YouTube 上的海外日常 vlog（一日花销、住房成本、超市买菜、上班通勤、租房、餐饮日常、文化反差类内容），适合做 3-5 分钟轻松向解说。规避高门槛专业话题（金融、政治、深度科技）。每次产出 5-10 个候选 topic，每个含中文标题、一段中文描述和 3-5 个英文搜索关键词。",
     "edit_style_prompt": "你写 continuous commentary 风格的 EDL：连续中文解说不间断，源视频做 B-roll。8-15 个 shot，每个 shot 是一句中文（15-50 字）配一段源视频画面。语气像邻家姐姐跟观众一起看视频边吐槽，亲切口语；钱要换算成人民币给个参考；遇到夸张的地方可以吐槽，遇到有意思的地方可以感叹。原音 0.10，中文 1.6 倍。"

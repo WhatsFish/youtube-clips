@@ -55,7 +55,46 @@ VALUES (
         "让我们一起",
         "学习了"
       ],
-      "must_include_disclaimer": false
+      "must_include_disclaimer": false,
+      "topic_discovery": {
+        "youtube_queries": [
+          "weird but true facts you never knew",
+          "fascinating little known history",
+          "today I learned strange facts",
+          "ancient customs that sound made up",
+          "linguistic curiosities english language",
+          "geographical oddities around the world",
+          "scientific curiosities explained",
+          "things you didnt know about everyday objects",
+          "weird animal behaviors documentary",
+          "obscure historical events that changed the world",
+          "bizarre facts about famous people",
+          "unusual cultural practices around the world"
+        ],
+        "exclude_keywords": [
+          "shorts only", "TikTok compilation", "reaction video",
+          "conspiracy", "10 fastest", "ranked"
+        ],
+        "max_picks": 8
+      },
+      "publish_channels": [
+        {
+          "platform": "bilibili_long",
+          "render_aspect": "16:9",
+          "cover_aspect": "16:10",
+          "cover_size": "1280x800",
+          "cover_count": 4,
+          "publish_prompt": "publish-bilibili"
+        },
+        {
+          "platform": "douyin",
+          "render_aspect": "9:16",
+          "cover_aspect": "9:16",
+          "cover_size": "1024x1920",
+          "cover_count": 4,
+          "publish_prompt": "publish-douyin"
+        }
+      ]
     },
     "topic_generation_prompt": "你为一个面向中文受众的「全球奇闻冷知识」频道选题。候选话题应当聚焦最近 1-2 周内 YouTube 上的奇闻 / 冷知识 / TIL / 历史轶事类内容，适合做 3-5 分钟节奏快、有悬念的解说。规避新闻时政（容易过时和敏感）、规避太硬的科学论文类、规避纯娱乐八卦。优先：一句话能让人愣一下的事实，背后有个故事可以展开。每次产出 5-10 个候选 topic，每个含中文标题、一段中文描述和 3-5 个英文搜索关键词。",
     "edit_style_prompt": "你写 continuous commentary 风格的 EDL：连续中文解说不间断，源视频做 B-roll。8-15 个 shot，每个 shot 是一句短中文（10-40 字最好）配一段源视频画面。语气像解说员，节奏快、悬念密、句子短；开头要勾人，结尾留个回味。关键数字一定要保留且讲清楚单位。原音 0.10，中文 1.6 倍。"

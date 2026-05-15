@@ -157,13 +157,26 @@ def run_edl_single(
     return Path("/video/youtube-clips/outputs/edl-prototype") / video_id / "edl.json"
 
 
-def run_render(video_id: str, run_id: int | None = None) -> Path:
+def run_render(
+    video_id: str,
+    *,
+    platforms: list[str] | None = None,
+    run_id: int | None = None,
+) -> Path:
+    """Render one or more platform variants (bilibili_long, douyin, …).
+
+    Defaults to bilibili_long when platforms is empty so legacy
+    commentary profiles that haven't yet opted in to multi-platform
+    continue to behave unchanged.
+    """
     cmd = [
         str(PROJECT_ROOT / ".venv" / "bin" / "python"),
         str(PROJECT_ROOT / "scripts" / "edl-render.py"),
     ]
     if run_id is not None:
         cmd.extend(["--run-id", str(run_id)])
+    if platforms:
+        cmd.extend(["--platforms", ",".join(platforms)])
     cmd.extend(["--", video_id])
     subprocess.run(cmd, check=True)
     return Path("/video/youtube-clips/outputs/edl-prototype") / video_id / "render.mp4"
@@ -295,8 +308,40 @@ def main() -> int:
         )
 
     # 4. Render — keyed off the primary video_id (which is the EDL output dir).
+    # If the profile declares publish_channels, fan out to every platform;
+    # else default to bilibili_long for back-compat.
     _stage_header("render")
-    render_path = run_render(primary_video_id, run_id=run_id)
+    publish_channels = (
+        (profile.config or {}).get("channel", {}).get("publish_channels") or []
+    )
+    platforms = [
+        c["platform"] for c in publish_channels if c.get("platform")
+    ] or ["bilibili_long"]
+    render_path = run_render(primary_video_id, platforms=platforms, run_id=run_id)
+
+    # 5. Publish materials — per channel in publish_channels. Best-effort;
+    # failure is non-fatal so the operator still gets the rendered mp4(s).
+    if publish_channels:
+        _stage_header("publish materials")
+        try:
+            import json as _json
+            edl_path = (
+                Path("/video/youtube-clips/outputs/edl-prototype")
+                / primary_video_id / "edl.json"
+            )
+            edl = _json.loads(edl_path.read_text(encoding="utf-8"))
+            from pipeline.publish import generate_publish_materials
+            job_id = edl.get("job_id")
+            if job_id:
+                generate_publish_materials(
+                    profile=profile, edl=edl, job_id=job_id,
+                    job_dir=edl_path.parent, run_id=run_id,
+                )
+            else:
+                print("  [publish] edl missing job_id; skipping materials gen")
+        except Exception as e:
+            print(f"  [publish] generation failed (non-fatal): {e}", flush=True)
+            events.emit(run_id, "publish", "fail", str(e))
 
     elapsed = time.monotonic() - overall_t0
     print()
