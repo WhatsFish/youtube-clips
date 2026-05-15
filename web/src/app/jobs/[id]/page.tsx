@@ -45,16 +45,10 @@ export default async function JobDetail({
         ) : null}
       </header>
 
-      <section className="mb-8">
-        <video
-          controls
-          preload="metadata"
-          className="w-full rounded-md bg-black aspect-video"
-          src={`${mediaBase}/render.mp4`}
-        >
-          您的浏览器不支持视频播放。
-        </video>
-      </section>
+      {/* Video preview moved into each PublishMaterials section so the
+          aspect ratio matches the platform variant (16:9 for B站,
+          9:16 for douyin). Top-level <video> removed to avoid playing
+          only the bilibili variant when multi-platform is active. */}
 
       <section className="mb-8 grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
         <div>

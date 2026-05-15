@@ -94,6 +94,31 @@ export default function PublishMaterials({
       </header>
 
       <div className="p-4 space-y-4">
+        {renderUrl ? (
+          <div>
+            <div className="text-xs font-semibold uppercase tracking-wider text-neutral-500 mb-2">
+              视频预览
+            </div>
+            <video
+              controls
+              preload="metadata"
+              className={
+                "rounded-md bg-black " +
+                // Portrait platforms get a narrower max-width so the
+                // 9:16 player doesn't dominate the page; landscape
+                // ones fill the full container.
+                (platform === "douyin" || platform === "tiktok" ||
+                 platform === "youtube_shorts"
+                  ? "max-h-[60vh] w-auto mx-auto block"
+                  : "w-full aspect-video")
+              }
+              src={renderUrl}
+            >
+              您的浏览器不支持视频播放。
+            </video>
+          </div>
+        ) : null}
+
         {coverUrls.length > 0 ? (
           <div>
             <div className="text-xs font-semibold uppercase tracking-wider text-neutral-500 mb-2">
