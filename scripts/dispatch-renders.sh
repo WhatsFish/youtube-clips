@@ -22,11 +22,18 @@ if ! flock -n 9; then
     exit 0
 fi
 
+# set -a so sourced vars are exported into the python child process,
+# not just kept in this shell's local scope.
+set -a
 . ~/.config/youtube-clips.env
+set +a
 cd /home/liharr/src/youtube-clips
 
+# psql -tA prints tuple rows AND the trailing command tag ("UPDATE 1") on
+# stdout — filter to just the numeric id row, else we feed "UPDATE 0" or
+# "36\nUPDATE 1" into --job-id and produce-original.py barfs.
 JOB_ID=$(docker exec -i traffic-monitor-db-1 \
-    psql -tA -U youtube_clips -d youtube_clips <<'SQL'
+    psql -tA -U youtube_clips -d youtube_clips <<'SQL' | grep -E '^[0-9]+$' | head -n1
 WITH claimed AS (
   SELECT id FROM jobs
   WHERE status = 'script_draft'
