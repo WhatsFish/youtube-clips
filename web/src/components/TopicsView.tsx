@@ -1,9 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import Link from "next/link";
 import type { Topic } from "@/lib/topics";
-import TopicCard from "@/components/TopicCard";
+import TopicCompactRow from "@/components/TopicCompactRow";
 
 type Tab = "pending" | "waiting" | "rendered";
 
@@ -12,6 +12,23 @@ const TAB_LABEL: Record<Tab, string> = {
   waiting: "已通过 · 待制作",
   rendered: "已通过 · 已制作",
 };
+
+// "全部" / "all-profiles" filter sentinel — kept separate from any real
+// profile name to avoid edge cases if a profile were ever literally
+// named "all".
+const ALL_PROFILES = "__all__";
+
+function uniqueProfiles(topics: Topic[]): string[] {
+  const set = new Set<string>();
+  for (const t of topics) set.add(t.profileName);
+  return Array.from(set).sort();
+}
+
+function countByProfile(topics: Topic[]): Map<string, number> {
+  const m = new Map<string, number>();
+  for (const t of topics) m.set(t.profileName, (m.get(t.profileName) ?? 0) + 1);
+  return m;
+}
 
 function groupByProfile(topics: Topic[]): Map<string, Topic[]> {
   const m = new Map<string, Topic[]>();
@@ -31,17 +48,31 @@ export default function TopicsView({
   waiting: Topic[];
   rendered: Topic[];
 }) {
-  // Default to whichever tab has actionable content. Pending wins if non-empty.
   const initial: Tab =
     pending.length > 0 ? "pending" : waiting.length > 0 ? "waiting" : "rendered";
   const [tab, setTab] = useState<Tab>(initial);
+  const [profileFilter, setProfileFilter] = useState<string>(ALL_PROFILES);
 
   const buckets: Record<Tab, Topic[]> = { pending, waiting, rendered };
-  const current = buckets[tab];
+
+  // Profile chip set is derived from the CURRENT tab — switching tabs
+  // resets the filter implicitly to "all" if the previously-selected
+  // profile has no topics in the new tab (so you never get an empty page).
+  const visibleProfiles = useMemo(() => uniqueProfiles(buckets[tab]), [tab, pending, waiting, rendered]);
+  const profileCounts = useMemo(() => countByProfile(buckets[tab]), [tab, pending, waiting, rendered]);
+  const effectiveFilter = visibleProfiles.includes(profileFilter)
+    ? profileFilter
+    : ALL_PROFILES;
+
+  const filtered = useMemo(() => {
+    return effectiveFilter === ALL_PROFILES
+      ? buckets[tab]
+      : buckets[tab].filter((t) => t.profileName === effectiveFilter);
+  }, [tab, effectiveFilter, pending, waiting, rendered]);
 
   return (
     <>
-      <nav className="mb-6 flex flex-wrap gap-1 border-b border-neutral-200 dark:border-neutral-800">
+      <nav className="mb-4 flex flex-wrap gap-1 border-b border-neutral-200 dark:border-neutral-800">
         {(Object.keys(TAB_LABEL) as Tab[]).map((t) => {
           const active = tab === t;
           const count = buckets[t].length;
@@ -57,11 +88,7 @@ export default function TopicsView({
               }
             >
               {TAB_LABEL[t]}{" "}
-              <span
-                className={
-                  "ml-1 text-xs " + (active ? "" : "text-neutral-400")
-                }
-              >
+              <span className={"ml-1 text-xs " + (active ? "" : "text-neutral-400")}>
                 ({count})
               </span>
             </button>
@@ -69,7 +96,28 @@ export default function TopicsView({
         })}
       </nav>
 
-      {current.length === 0 ? (
+      {visibleProfiles.length > 1 && (
+        <div className="mb-4 flex flex-wrap gap-1.5">
+          <FilterChip
+            label="全部"
+            count={buckets[tab].length}
+            active={effectiveFilter === ALL_PROFILES}
+            onClick={() => setProfileFilter(ALL_PROFILES)}
+          />
+          {visibleProfiles.map((p) => (
+            <FilterChip
+              key={p}
+              label={p}
+              count={profileCounts.get(p) ?? 0}
+              active={effectiveFilter === p}
+              onClick={() => setProfileFilter(p)}
+              mono
+            />
+          ))}
+        </div>
+      )}
+
+      {filtered.length === 0 ? (
         <div className="border border-dashed border-neutral-300 dark:border-neutral-700 rounded-md p-6 text-sm text-neutral-500">
           {tab === "pending" && (
             <>
@@ -83,46 +131,126 @@ export default function TopicsView({
           {tab === "rendered" && "还没有视频做出来。"}
         </div>
       ) : (
-        <ProfileGrouped topics={current} variant={tab} />
+        <ProfileGrouped topics={filtered} variant={tab} singleProfile={effectiveFilter !== ALL_PROFILES} />
       )}
     </>
+  );
+}
+
+function FilterChip({
+  label,
+  count,
+  active,
+  onClick,
+  mono = false,
+}: {
+  label: string;
+  count: number;
+  active: boolean;
+  onClick: () => void;
+  mono?: boolean;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={
+        "text-xs px-2.5 py-1 rounded-full border transition " +
+        (active
+          ? "border-neutral-900 dark:border-neutral-100 bg-neutral-900 dark:bg-neutral-100 text-neutral-50 dark:text-neutral-900"
+          : "border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-900")
+      }
+    >
+      <span className={mono ? "font-mono" : ""}>{label}</span>
+      <span className={"ml-1 " + (active ? "opacity-70" : "text-neutral-500")}>
+        {count}
+      </span>
+    </button>
   );
 }
 
 function ProfileGrouped({
   topics,
   variant,
+  singleProfile,
 }: {
   topics: Topic[];
   variant: Tab;
+  singleProfile: boolean;
 }) {
+  // When the user has already narrowed to one profile via the filter
+  // chips, skip the per-profile section header — would just repeat the
+  // chip label and waste vertical space.
+  if (singleProfile) {
+    if (variant === "pending") {
+      return (
+        <ul className="space-y-1.5">
+          {topics.map((t) => (
+            <TopicCompactRow key={t.id} topic={t} />
+          ))}
+        </ul>
+      );
+    }
+    return (
+      <ul className="space-y-1.5">
+        {topics.map((t) => (
+          <ApprovedTopicRow key={t.id} topic={t} variant={variant} />
+        ))}
+      </ul>
+    );
+  }
+
   const groups = groupByProfile(topics);
   return (
     <>
       {Array.from(groups.entries()).map(([profile, ts]) => (
-        <div key={profile} className="mb-6">
-          <h3 className="font-mono text-sm font-semibold mb-2 text-neutral-600 dark:text-neutral-400">
-            {profile}{" "}
-            <span className="text-xs text-neutral-500 font-sans font-normal">
-              ({ts.length})
-            </span>
-          </h3>
-          {variant === "pending" ? (
-            <ul className="space-y-3">
-              {ts.map((t) => (
-                <TopicCard key={t.id} topic={t} />
-              ))}
-            </ul>
-          ) : (
-            <ul className="space-y-1.5">
-              {ts.map((t) => (
-                <ApprovedTopicRow key={t.id} topic={t} variant={variant} />
-              ))}
-            </ul>
-          )}
-        </div>
+        <ProfileSection
+          key={profile}
+          profile={profile}
+          topics={ts}
+          variant={variant}
+        />
       ))}
     </>
+  );
+}
+
+function ProfileSection({
+  profile,
+  topics,
+  variant,
+}: {
+  profile: string;
+  topics: Topic[];
+  variant: Tab;
+}) {
+  const [open, setOpen] = useState(true);
+  return (
+    <div className="mb-5">
+      <button
+        onClick={() => setOpen(!open)}
+        className="flex items-baseline gap-2 mb-2 w-full text-left hover:opacity-80"
+      >
+        <span className="text-xs text-neutral-400 w-3">{open ? "▼" : "▶"}</span>
+        <h3 className="font-mono text-sm font-semibold text-neutral-600 dark:text-neutral-400">
+          {profile}
+        </h3>
+        <span className="text-xs text-neutral-500">({topics.length})</span>
+      </button>
+      {open &&
+        (variant === "pending" ? (
+          <ul className="space-y-1.5 ml-5">
+            {topics.map((t) => (
+              <TopicCompactRow key={t.id} topic={t} />
+            ))}
+          </ul>
+        ) : (
+          <ul className="space-y-1.5 ml-5">
+            {topics.map((t) => (
+              <ApprovedTopicRow key={t.id} topic={t} variant={variant} />
+            ))}
+          </ul>
+        ))}
+    </div>
   );
 }
 
@@ -161,9 +289,7 @@ function ApprovedTopicRow({
       className={
         "border rounded-md p-2.5 text-sm " +
         "border-neutral-200 dark:border-neutral-800 " +
-        (link
-          ? "hover:bg-neutral-100 dark:hover:bg-neutral-900 transition"
-          : "")
+        (link ? "hover:bg-neutral-100 dark:hover:bg-neutral-900 transition" : "")
       }
     >
       {link ? (
