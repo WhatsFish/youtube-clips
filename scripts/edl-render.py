@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import subprocess
 import sys
@@ -235,25 +236,46 @@ def render_shot(
     # AI-video capped at 10s playing under a 13-18s narration), we used
     # to freeze the last frame via tpad=stop_mode=clone — operator
     # perceived as "后面长时间静止". For producer-mode shots (source_start=0,
-    # source has no audio we care about) we instead loop the source clip
-    # so motion stays alive end-to-end. The loop wraparound creates a
-    # single visible "cut" per cycle; on 5-10s clips with mild content
-    # that's far less jarring than 5+s of freeze.
+    # source has no audio to align) we instead loop the source and cross-
+    # fade between iterations so motion stays alive AND the loop seam is
+    # hidden.
     #
-    # We only loop when (a) the gap is non-trivial (>0.3s — sub-frame
-    # rounding pads via clone look fine), and (b) source_start is 0
-    # (i.e. the caller wants the whole clip, not a slice — looping a
-    # mid-source slice gets weird and that case is commentary mode where
-    # YouTube sources are long enough to never need padding anyway).
-    will_loop_source = pad_dur > 0.3 and source_start < 0.001
+    # Loop branch only kicks in when (a) gap >0.3s, (b) source_start=0
+    # (producer mode; commentary uses a mid-source slice), (c) no source
+    # audio to keep in sync.
+    XFADE_SEC = 1.0
+    will_loop_source = (
+        pad_dur > 0.3 and source_start < 0.001 and not source_has_audio
+    )
+    # Crossfade only feasible when each loop iteration has enough visible
+    # content beyond the fade itself (else the whole iteration is just a
+    # fade in/out). Sub-1.5s sources fall back to a plain -stream_loop.
+    use_xfade_loop = will_loop_source and source_total_dur > XFADE_SEC + 0.5
 
-    if will_loop_source:
+    if use_xfade_loop:
+        # Each extra iteration past the first contributes
+        # (source_total_dur - XFADE_SEC) of visible time (the last XFADE_SEC
+        # of iter N overlaps with the first XFADE_SEC of iter N+1).
+        # Total visible = src + (n-1)*(src - xfade). Solve for n:
+        visible_per_extra = source_total_dur - XFADE_SEC
+        n_iter = math.ceil((duration - source_total_dur) / visible_per_extra) + 1
+        n_iter = max(2, n_iter)
+        # vf applied AFTER xfade chain, not per-iteration (all iterations
+        # are the same source so all the same resolution already).
+        vf = (
+            f"scale={W}:{H}:force_original_aspect_ratio=decrease,"
+            f"pad={W}:{H}:(ow-iw)/2:(oh-ih)/2,"
+            f"setsar=1"
+        )
+    elif will_loop_source:
+        n_iter = 1  # naive stream_loop, no xfade chain
         vf = (
             f"scale={W}:{H}:force_original_aspect_ratio=decrease,"
             f"pad={W}:{H}:(ow-iw)/2:(oh-ih)/2,"
             f"setsar=1"
         )
     else:
+        n_iter = 1
         vf = (
             f"scale={W}:{H}:force_original_aspect_ratio=decrease,"
             f"pad={W}:{H}:(ow-iw)/2:(oh-ih)/2,"
@@ -270,6 +292,33 @@ def render_shot(
     # stream with silence up to exactly `duration`; -t duration then
     # truncates so video and audio are guaranteed equal length.
     apad = f"apad=whole_dur={duration:.3f}"
+
+    # Video filter graph head: in xfade-loop mode, we feed N inputs of
+    # the same source file and crossfade between them; otherwise the
+    # single [0:v] gets vf directly. After the head, the final label is
+    # [v] regardless of branch — downstream audio logic doesn't change.
+    if use_xfade_loop:
+        # Chain xfade across the N iterations. accum is the offset (s)
+        # into the cumulative timeline at which each xfade begins; it
+        # advances by visible_per_extra (= src_dur - xfade) per step.
+        visible_per_extra = source_total_dur - XFADE_SEC
+        xfade_parts: list[str] = []
+        prev_label = "0:v"
+        accum = source_total_dur - XFADE_SEC
+        for j in range(1, n_iter):
+            out_label = "vxfade" if j == n_iter - 1 else f"vx{j:02d}"
+            xfade_parts.append(
+                f"[{prev_label}][{j}:v]xfade=transition=fade:"
+                f"duration={XFADE_SEC}:offset={accum:.3f}[{out_label}]"
+            )
+            prev_label = out_label
+            accum += visible_per_extra
+        video_head = ";".join(xfade_parts) + f";[vxfade]{vf}[v]"
+        narration_idx = n_iter
+    else:
+        video_head = f"[0:v]{vf}[v]"
+        narration_idx = 1
+
     if source_has_audio:
         intervals = speech_intervals_global or []
         vad_expr = _build_volume_expr(intervals, source_start, visual_take)
@@ -292,27 +341,30 @@ def render_shot(
         # 0.03-0.10 via vad_expr, so no clipping risk when summed with
         # narration at 1.6.
         filter_complex = (
-            f"[0:v]{vf}[v];"
+            f"{video_head};"
             f"{bg_filter};"
-            f"[1:a]volume={NARR_VOL}[fg];"
+            f"[{narration_idx}:a]volume={NARR_VOL}[fg];"
             f"[bg][fg]amix=inputs=2:duration=longest:dropout_transition=0:normalize=0,"
             f"{apad},aresample=48000[a]"
         )
     else:
-        # No source audio (typical Pexels stock). Narration alone, padded
-        # with silence to span the full shot duration so the post-tail
-        # silence is real silence frames — not "missing audio" that
-        # concat treats as a shorter shot.
+        # No source audio (typical Pexels stock / Doubao stripped). Narration
+        # alone, padded with silence to span the full shot duration so the
+        # post-tail silence is real silence frames.
         filter_complex = (
-            f"[0:v]{vf}[v];"
-            f"[1:a]volume={NARR_VOL},{apad},aresample=48000[a]"
+            f"{video_head};"
+            f"[{narration_idx}:a]volume={NARR_VOL},{apad},aresample=48000[a]"
         )
 
-    # In loop-source mode we pass -stream_loop -1 to make the input loop
-    # indefinitely, and rely on the output -t to cut at the final
-    # duration. In normal mode we keep the original -ss / input -t pre-
-    # input trim plus the tpad-clone freeze in vf above.
-    if will_loop_source:
+    # Input args:
+    #   - xfade-loop mode: N -i source repeated (each gets indep xfade input)
+    #   - naive stream_loop: -stream_loop -1 -i source
+    #   - normal: -ss / -t pre-input trim + single -i
+    if use_xfade_loop:
+        input_v_args: list[str] = []
+        for _ in range(n_iter):
+            input_v_args += ["-i", str(source)]
+    elif will_loop_source:
         input_v_args = ["-stream_loop", "-1", "-i", str(source)]
     else:
         input_v_args = [
