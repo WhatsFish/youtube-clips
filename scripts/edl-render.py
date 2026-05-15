@@ -231,12 +231,35 @@ def render_shot(
     visual_take = min(duration, available)
     pad_dur = max(0.0, duration - visual_take)
 
-    vf = (
-        f"scale={W}:{H}:force_original_aspect_ratio=decrease,"
-        f"pad={W}:{H}:(ow-iw)/2:(oh-ih)/2,"
-        f"tpad=stop_mode=clone:stop_duration={pad_dur:.3f},"
-        f"setsar=1"
-    )
+    # When the source can't cover the full narration (typically a Doubao
+    # AI-video capped at 10s playing under a 13-18s narration), we used
+    # to freeze the last frame via tpad=stop_mode=clone — operator
+    # perceived as "后面长时间静止". For producer-mode shots (source_start=0,
+    # source has no audio we care about) we instead loop the source clip
+    # so motion stays alive end-to-end. The loop wraparound creates a
+    # single visible "cut" per cycle; on 5-10s clips with mild content
+    # that's far less jarring than 5+s of freeze.
+    #
+    # We only loop when (a) the gap is non-trivial (>0.3s — sub-frame
+    # rounding pads via clone look fine), and (b) source_start is 0
+    # (i.e. the caller wants the whole clip, not a slice — looping a
+    # mid-source slice gets weird and that case is commentary mode where
+    # YouTube sources are long enough to never need padding anyway).
+    will_loop_source = pad_dur > 0.3 and source_start < 0.001
+
+    if will_loop_source:
+        vf = (
+            f"scale={W}:{H}:force_original_aspect_ratio=decrease,"
+            f"pad={W}:{H}:(ow-iw)/2:(oh-ih)/2,"
+            f"setsar=1"
+        )
+    else:
+        vf = (
+            f"scale={W}:{H}:force_original_aspect_ratio=decrease,"
+            f"pad={W}:{H}:(ow-iw)/2:(oh-ih)/2,"
+            f"tpad=stop_mode=clone:stop_duration={pad_dur:.3f},"
+            f"setsar=1"
+        )
 
     # Pad audio to exactly `duration` (= narr_dur + tail_sec). Without
     # this, audio ends at narration's end (and concat at -c copy treats
@@ -285,10 +308,20 @@ def render_shot(
             f"[1:a]volume={NARR_VOL},{apad},aresample=48000[a]"
         )
 
+    # In loop-source mode we pass -stream_loop -1 to make the input loop
+    # indefinitely, and rely on the output -t to cut at the final
+    # duration. In normal mode we keep the original -ss / input -t pre-
+    # input trim plus the tpad-clone freeze in vf above.
+    if will_loop_source:
+        input_v_args = ["-stream_loop", "-1", "-i", str(source)]
+    else:
+        input_v_args = [
+            "-ss", f"{source_start:.3f}", "-t", f"{visual_take:.3f}",
+            "-i", str(source),
+        ]
     cmd = [
         "ffmpeg", "-y", "-loglevel", "error",
-        "-ss", f"{source_start:.3f}", "-t", f"{visual_take:.3f}",
-        "-i", str(source),
+        *input_v_args,
         "-i", str(narration_audio),
         "-filter_complex",
         filter_complex,
