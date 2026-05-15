@@ -49,6 +49,12 @@ export default function TopicCompactRow({ topic }: { topic: Topic }) {
   const feedLabel = feed ? (FEED_LABEL[feed] ?? feed) : null;
   const hasDetail =
     !!topic.description || !!topic.metadata?.suggested_angle || !!feedLabel;
+  // Only show an age chip once topic is >=3 days old — most newly-pushed
+  // candidates are <24h and showing "<1d" everywhere is just noise.
+  const ageDays = Math.floor(
+    (Date.now() - new Date(topic.generatedAt).getTime()) / (24 * 3600 * 1000),
+  );
+  const showAge = ageDays >= 3;
 
   return (
     <li className="border border-neutral-200 dark:border-neutral-800 rounded-md hover:border-neutral-300 dark:hover:border-neutral-700 transition">
@@ -71,6 +77,19 @@ export default function TopicCompactRow({ topic }: { topic: Topic }) {
             #{topic.id}
           </span>
           <span className="truncate">{topic.title}</span>
+          {showAge && (
+            <span
+              className={
+                "text-[10px] flex-shrink-0 px-1 rounded font-mono " +
+                (ageDays >= 7
+                  ? "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-400"
+                  : "text-neutral-400")
+              }
+              title={`生成于 ${new Date(topic.generatedAt).toLocaleString("zh-CN")}`}
+            >
+              {ageDays}d
+            </span>
+          )}
         </button>
         <div className="flex gap-1 flex-shrink-0">
           <button

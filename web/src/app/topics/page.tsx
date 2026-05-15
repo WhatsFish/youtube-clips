@@ -13,7 +13,7 @@ export default async function TopicsPage() {
   const rendered = approved.filter((t) => t.rendered);
 
   return (
-    <main className="max-w-3xl mx-auto px-5 py-12">
+    <main className="max-w-5xl mx-auto px-5 py-12">
       <Link href="/" className="text-sm text-neutral-500 hover:underline">
         ← back
       </Link>

@@ -139,3 +139,23 @@ export async function setTopicStatus(
     [status, id],
   );
 }
+
+/** Bulk-reject all pending topics for one profile older than N days.
+ *  Used by the "清理 >Nd" button on the /topics page. Returns affected count. */
+export async function bulkRejectOldPending(
+  profileName: string,
+  olderThanDays: number,
+): Promise<number> {
+  const rows = await query<{ id: number }>(
+    `UPDATE topics t
+        SET status = 'rejected'
+       FROM profiles p
+      WHERE t.profile_id = p.id
+        AND p.name = $1
+        AND t.status = 'pending'
+        AND t.generated_at < NOW() - ($2::int * INTERVAL '1 day')
+    RETURNING t.id`,
+    [profileName, olderThanDays],
+  );
+  return rows.length;
+}

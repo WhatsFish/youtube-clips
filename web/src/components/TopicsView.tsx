@@ -182,13 +182,7 @@ function ProfileGrouped({
   // chip label and waste vertical space.
   if (singleProfile) {
     if (variant === "pending") {
-      return (
-        <ul className="space-y-1.5">
-          {topics.map((t) => (
-            <TopicCompactRow key={t.id} topic={t} />
-          ))}
-        </ul>
-      );
+      return <TopicGrid topics={topics} />;
     }
     return (
       <ul className="space-y-1.5">
@@ -214,6 +208,22 @@ function ProfileGrouped({
   );
 }
 
+/** 2-col responsive grid of compact rows. Single col under md (mobile). */
+function TopicGrid({ topics }: { topics: Topic[] }) {
+  return (
+    <ul className="grid grid-cols-1 md:grid-cols-2 gap-1.5">
+      {topics.map((t) => (
+        <TopicCompactRow key={t.id} topic={t} />
+      ))}
+    </ul>
+  );
+}
+
+// Profile sections with more than this many topics default to collapsed —
+// keeps the page reachable when one channel has ~50 stale pending while
+// others have 5 fresh ones.
+const COLLAPSE_THRESHOLD = 15;
+
 function ProfileSection({
   profile,
   topics,
@@ -223,26 +233,32 @@ function ProfileSection({
   topics: Topic[];
   variant: Tab;
 }) {
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(topics.length <= COLLAPSE_THRESHOLD);
   return (
     <div className="mb-5">
-      <button
-        onClick={() => setOpen(!open)}
-        className="flex items-baseline gap-2 mb-2 w-full text-left hover:opacity-80"
-      >
-        <span className="text-xs text-neutral-400 w-3">{open ? "▼" : "▶"}</span>
-        <h3 className="font-mono text-sm font-semibold text-neutral-600 dark:text-neutral-400">
-          {profile}
-        </h3>
-        <span className="text-xs text-neutral-500">({topics.length})</span>
-      </button>
+      <div className="flex items-baseline gap-2 mb-2 flex-wrap">
+        <button
+          onClick={() => setOpen(!open)}
+          className="flex items-baseline gap-2 text-left hover:opacity-80"
+        >
+          <span className="text-xs text-neutral-400 w-3">{open ? "▼" : "▶"}</span>
+          <h3 className="font-mono text-sm font-semibold text-neutral-600 dark:text-neutral-400">
+            {profile}
+          </h3>
+          <span className="text-xs text-neutral-500">({topics.length})</span>
+        </button>
+        {variant === "pending" && (
+          <BulkPurgeButton
+            profileName={profile}
+            topicCount={topics.length}
+          />
+        )}
+      </div>
       {open &&
         (variant === "pending" ? (
-          <ul className="space-y-1.5 ml-5">
-            {topics.map((t) => (
-              <TopicCompactRow key={t.id} topic={t} />
-            ))}
-          </ul>
+          <div className="ml-5">
+            <TopicGrid topics={topics} />
+          </div>
         ) : (
           <ul className="space-y-1.5 ml-5">
             {topics.map((t) => (
@@ -251,6 +267,66 @@ function ProfileSection({
           </ul>
         ))}
     </div>
+  );
+}
+
+/** Bulk-prune button: deletes pending topics for this profile older than
+ *  N days. Asks the operator to confirm a day threshold; default 7. */
+function BulkPurgeButton({
+  profileName,
+  topicCount,
+}: {
+  profileName: string;
+  topicCount: number;
+}) {
+  const [pending, setPending] = useState(false);
+  // Don't show purge for tiny lists — only useful when there's actual cruft.
+  if (topicCount < 5) return null;
+
+  async function purge() {
+    const raw = window.prompt(
+      `删除 ${profileName} 中超过几天的 pending topic？(默认 7)`,
+      "7",
+    );
+    if (raw === null) return;
+    const days = parseInt(raw, 10);
+    if (!Number.isFinite(days) || days < 1 || days > 365) {
+      alert("天数要在 1-365 之间");
+      return;
+    }
+    if (!window.confirm(`确定删除 ${profileName} 超过 ${days} 天的 pending topic？`)) {
+      return;
+    }
+    setPending(true);
+    try {
+      const r = await fetch("/youtube-clips/api/topics/bulk-reject", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ profileName, olderThanDays: days }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        alert(`error: ${data.error ?? r.status}`);
+        return;
+      }
+      alert(`删除了 ${data.count} 条`);
+      window.location.reload();
+    } catch (e) {
+      alert(`network error: ${e}`);
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <button
+      onClick={purge}
+      disabled={pending}
+      className="text-[10px] px-2 py-0.5 rounded border border-neutral-300 dark:border-neutral-700 text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-900 disabled:opacity-50"
+      title="按生成天数批量删除老的待审批 topic"
+    >
+      {pending ? "..." : "✗ 清理老 topic"}
+    </button>
   );
 }
 
