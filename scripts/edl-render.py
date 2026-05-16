@@ -572,7 +572,12 @@ def _ass_escape(text: str) -> str:
 # word boundaries — long sentences just overflow off-screen. We split
 # at Chinese punctuation as the natural breath beat.
 SUBTITLE_MAX_CHARS_PER_LINE = 26
-SUBTITLE_BREAK_CHARS = "，。；：、？！"
+# Both Chinese (FF0C 等) and ASCII (002C 等) punctuation count as break
+# points. Claude sometimes emits ASCII commas in Chinese narration despite
+# the prompt asking for Chinese punctuation; without ASCII coverage here
+# the wrap function only ever finds a break at the trailing `。`, fails
+# to split, and ships a single long line that overflows the canvas.
+SUBTITLE_BREAK_CHARS = "，。；：、？！,.;:?!"
 
 
 def _wrap_chinese_subtitle(text: str, max_chars: int = SUBTITLE_MAX_CHARS_PER_LINE) -> str:
