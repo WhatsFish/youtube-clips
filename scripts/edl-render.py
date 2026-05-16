@@ -121,6 +121,26 @@ def ffprobe_duration(path: Path) -> float:
     return float(out)
 
 
+def make_silent_mp3(out_path: Path, duration_sec: float) -> Path:
+    """Generate a silent mp3 of the given duration. Used when a shot's
+    narration is intentionally empty (lifestyle channels often let the
+    picture + bgm carry — see edl-commentary.v2 prompt). Single-channel
+    24kHz to match the Azure TTS output format so downstream mixing
+    doesn't need a separate resample step.
+    """
+    subprocess.run(
+        [
+            "ffmpeg", "-y", "-loglevel", "error",
+            "-f", "lavfi", "-i", f"anullsrc=r=24000:cl=mono",
+            "-t", f"{duration_sec:.3f}",
+            "-c:a", "libmp3lame", "-b:a", "160k",
+            str(out_path),
+        ],
+        check=True,
+    )
+    return out_path
+
+
 def tts(text: str, out_path: Path, voice: str, rate_pct: int) -> Path:
     """Azure Neural TTS with a prosody rate boost wrapped around the line.
 
@@ -657,14 +677,19 @@ def write_ass_subs(
         # Order matters: escape first (turns each `\` into `\\`), then
         # inject `\N` line breaks. If we wrapped first, our `\N` markers
         # would get doubled to `\\N` by escape and stop working as newlines.
-        text = _wrap_chinese_subtitle(
-            _ass_escape(sh.get("narration", "")),
-            max_chars=max_chars_per_line,
-        )
-        events.append(
-            f"Dialogue: 0,{_ass_timestamp(t)},{_ass_timestamp(sub_end)},"
-            f"Default,,0,0,0,,{text}"
-        )
+        raw_narration = (sh.get("narration") or "").strip()
+        # Silent shots: emit no Dialogue event at all — an empty Dialogue
+        # line would render as a transparent 0-text overlay but it still
+        # takes a slot in the ASS file and isn't useful.
+        if raw_narration:
+            text = _wrap_chinese_subtitle(
+                _ass_escape(raw_narration),
+                max_chars=max_chars_per_line,
+            )
+            events.append(
+                f"Dialogue: 0,{_ass_timestamp(t)},{_ass_timestamp(sub_end)},"
+                f"Default,,0,0,0,,{text}"
+            )
         # Shot timeline still advances by the FULL shot duration so the
         # next subtitle starts at the right concat-time offset.
         t += shot_dur
@@ -896,20 +921,29 @@ def main() -> int:
     overall_t0 = time.monotonic()
 
     for i, sh in enumerate(shots):
-        narr_text = sh["narration"]
+        narr_text = (sh.get("narration") or "").strip()
         src_idx = int(sh.get("source_idx", 0))
         if src_idx < 0 or src_idx >= len(source_paths):
             sys.exit(f"shot {i}: source_idx={src_idx} out of range (have {len(source_paths)} sources)")
         src_start = float(sh["source_start_sec"])
 
         events.emit(run_id, "render_shot", "start",
-                    f"s{i:02d}: {narr_text[:50]}",
+                    f"s{i:02d}: {narr_text[:50] or '(silent)'}",
                     shot_idx=i, chars=len(narr_text))
-        label = stage(f"s{i:02d} tts ({len(narr_text)}c)")
         narr_audio = work_dir / f"s{i:02d}_narr.mp3"
-        tts(narr_text, narr_audio, voice, rate_pct)
-        narr_dur = ffprobe_duration(narr_audio)
-        done(label)
+        if narr_text:
+            label = stage(f"s{i:02d} tts ({len(narr_text)}c)")
+            tts(narr_text, narr_audio, voice, rate_pct)
+            narr_dur = ffprobe_duration(narr_audio)
+            done(label)
+        else:
+            # Silent shot — lifestyle channels can let picture + bgm carry.
+            # Duration: shot.silent_duration_sec if set, else 5s default
+            # (long enough to hold a beat without dragging).
+            narr_dur = float(sh.get("silent_duration_sec") or 5.0)
+            label = stage(f"s{i:02d} silent ({narr_dur:.1f}s)")
+            make_silent_mp3(narr_audio, narr_dur)
+            done(label)
 
         # Every shot — including the last — gets the trailing pause.
         # Earlier we suppressed it on the final shot fearing the video

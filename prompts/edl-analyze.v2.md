@@ -5,6 +5,7 @@ purpose: Stage 1 vision-aware variant — read frame jpgs via Read tool when sou
 last_updated: 2026-05-09
 required_placeholders:
   - target_language_label
+  - profile_block
   - sources_metadata
   - frames_block
   - transcripts_block
@@ -41,10 +42,12 @@ notes: |
 
 跟 v1 一样，做信息分析，**不写文案**：
 
-1. **决策**：素材里有没有 3 个以上真正值得讲的点？凑不出就 skip。
-2. **找 insights**：3-5 个，每个有具体支撑、是观众听了会"哦"的内容、跨源整合优先。
-3. **画叙事弧线**：hook → body → climax → takeaway。
-4. **标 open questions**：源没回答但观众可能会问的。
+1. **决策**：素材里有没有**值得讲 / 值得展示**的内容？这里关键看 PROFILE 是哪类频道：
+   - **分析型频道**（shanyang-cn / tech-insights / finance-insights 这类）：需要 3 个以上有具体支撑的「分析型 insight」（论点 / 反共识 / 对比 / 趋势判断）。凑不出就 skip。
+   - **生活展示型频道**（overseas-vlog-cn / world-watching-cn / curiosity-cn 这类）：**画面 / 氛围 / 生活质感本身就是看点**。允许「观察型 insight」——一段街景 / 一道菜 / 一个有意思的细节 / 一种生活节奏，只要能让观众多看一眼，都算。这类频道**不需要硬凑「分析型 insight」**，2 个有特色的观察 + 几个轻型补充就够开 make。skip 门槛要低——只有素材**画面单一、缺乏可看性**（一直对着镜头说话且博主没什么吸引力、或视频画面非常乏味）才 skip。
+2. **找 insights**：3-5 个；分析型频道走分析型，生活展示型走观察型。每个都要具体（具体的画面 / 具体的对象 / 具体的细节）。
+3. **画叙事弧线**：hook → body → climax → takeaway。生活展示型可以是 hook → 几段生活切片 → 收尾感叹，不强求 climax。
+4. **标 open questions**：观众可能会好奇但源没回答的。
 
 ## 严格遵守
 
@@ -86,6 +89,9 @@ JSON schema:
 }}
 
 如果 decision = "skip"，可省略后面的字段。
+
+================ PROFILE ================
+{profile_block}
 
 ================ 源视频元数据 ================
 {sources_metadata}

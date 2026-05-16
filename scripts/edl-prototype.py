@@ -360,29 +360,31 @@ def main() -> int:
     for i, s in enumerate(sources):
         print(f"  [{i}] {s.role:<10} {s.video_id}  {s.title[:50]}")
 
-    # Pre-flight check on filesystem for every source. Sources without a
-    # vtt are not fatal anymore — we sample frames and run a vision-aware
-    # Stage 1 instead. This unlocks no-caption content (walking tours,
-    # ASMR, music videos, vlogs whose creator never enabled subtitles)
-    # which otherwise stalls the whole produce chain.
+    # Pre-flight: every source gets frame-sampled (regardless of VTT).
+    # Used to gate on `if not s.vtt:` but VTT presence isn't a reliable
+    # signal of content density — day-in-the-life vlogs typically *have*
+    # captions but they're sparse ("let's go", "this is the restaurant"),
+    # so Stage 1 (text-only v1) would mark them skip for "lack of
+    # substantive content". Always sampling frames lets v2 (vision-aware)
+    # take the visual evidence into account when deciding skip vs make,
+    # which is exactly the B-roll-heavy case overseas-vlog-cn targets.
     for s in sources:
         if not s.mp4.exists():
             sys.exit(f"missing video for source {s.video_id}: {s.mp4}")
-        if not s.vtt:
-            frames_dir = RAW_BASE / s.video_id / "frames"
-            existing = sorted(frames_dir.glob("frame-*.jpg")) if frames_dir.is_dir() else []
-            if existing:
-                print(
-                    f"  [{s.video_id}] no vtt; using {len(existing)} cached frames "
-                    f"under {frames_dir}"
-                )
-            else:
-                print(
-                    f"  [{s.video_id}] no vtt; sampling frames "
-                    f"(every {FRAME_INTERVAL_SEC}s) → {frames_dir}"
-                )
-                paths = sample_frames(s.mp4, frames_dir, interval_sec=FRAME_INTERVAL_SEC)
-                print(f"  [{s.video_id}] extracted {len(paths)} frames")
+        frames_dir = RAW_BASE / s.video_id / "frames"
+        existing = sorted(frames_dir.glob("frame-*.jpg")) if frames_dir.is_dir() else []
+        if existing:
+            print(
+                f"  [{s.video_id}] using {len(existing)} cached frames "
+                f"under {frames_dir}"
+            )
+        else:
+            print(
+                f"  [{s.video_id}] sampling frames "
+                f"(every {FRAME_INTERVAL_SEC}s) → {frames_dir}"
+            )
+            paths = sample_frames(s.mp4, frames_dir, interval_sec=FRAME_INTERVAL_SEC)
+            print(f"  [{s.video_id}] extracted {len(paths)} frames")
 
     # Load Profile + Stage-2 prompt template.
     # The prompt name is chosen in this order:
