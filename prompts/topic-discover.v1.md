@@ -25,6 +25,7 @@ notes: |
 - **时效性 + 普世性**。最近发生 + 多数中国观众有切身感的优先。专业小众话题除非频道就是专业向，否则跳过。
 - **避免清单 / 标题党**。原标题就是"3 个原因 / 5 个迹象 / 你绝对想不到"那种，要么改写要么跳过。
 - **拒绝纯娱乐**：明星八卦、综艺花絮、电竞、追星，除非频道明确就是娱乐向。
+- **commentary 模式频道（看下方 PROFILE.channel.production_mode）特别注意：避免画面单一的 talking-head 源视频**——主体大半时间对着镜头说话、B-roll 稀薄。中文解说叠在一张说话的脸上没看点。**例外**：主体本身就是看点（颜值 / 个性 / 表演力 / 故事感强）的可以保留——观众停 30 秒是冲着 ta 来的，不是冲着 B-roll。判断方法（没工具调，只能靠 metadata 推断）：标题里 "Day in the Life / Apartment Tour / I Cooked / Walking Around / Morning Routine / Q&A trip" 这类**通常 B-roll 多**；"My Story / I Quit / How I / Update / Storytime / Thoughts on / Why I" 这类**通常坐着说话**。channel 名 / view_count 也参考——如果是颜值/性格型博主单独露脸也撑得起来。**实在没把握就跳过**，宁可少一条也别选坐着说话 + 平平讲述的源。
 
 ## 输出要求
 

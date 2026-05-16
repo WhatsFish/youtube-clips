@@ -58,25 +58,26 @@ VALUES (
       "must_include_disclaimer": false,
       "topic_discovery": {
         "youtube_queries": [
-          "USA suburb daily life vlog day in the life",
-          "UK London daily routine vlog",
-          "Germany Berlin everyday life vlog",
-          "France Paris daily life vlog",
-          "Italy daily life vlog day in the life",
-          "Spain Madrid Barcelona daily vlog",
-          "Sweden Stockholm daily routine vlog",
-          "Netherlands Amsterdam daily life",
-          "Canada Toronto Vancouver daily vlog",
-          "Australia Sydney Melbourne daily life",
-          "Japan Tokyo Osaka daily life vlog",
-          "Korea Seoul daily life vlog",
-          "Singapore daily routine vlog",
-          "Mexico daily life day in the life vlog",
-          "Brazil daily life vlog"
+          "USA suburb day in the life apartment tour",
+          "UK London day in the life walking around",
+          "Germany Berlin morning routine apartment tour",
+          "France Paris day in the life cooking at home",
+          "Italy day in the life cooking grocery shopping",
+          "Spain Madrid Barcelona apartment tour walking",
+          "Sweden Stockholm morning routine fika cafe",
+          "Netherlands Amsterdam cycling day in the life",
+          "Canada Toronto Vancouver day in the life cooking",
+          "Australia Sydney Melbourne day in the life beach",
+          "Japan Tokyo Osaka day in the life apartment",
+          "Korea Seoul day in the life market food",
+          "Singapore day in the life hawker food",
+          "Mexico City day in the life market street food",
+          "Brazil Sao Paulo day in the life favela tour"
         ],
         "exclude_keywords": [
           "shorts only", "TikTok compilation", "reaction video",
-          "tourist trap", "luxury hotel tour"
+          "tourist trap", "luxury hotel tour",
+          "my story", "storytime", "I quit", "update", "Q&A"
         ],
         "max_picks": 8
       },
