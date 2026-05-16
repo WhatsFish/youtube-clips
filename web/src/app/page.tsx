@@ -275,7 +275,9 @@ function JobCard({ job }: { job: Job }) {
         className="block p-4"
       >
         <div className="font-medium text-base mb-1">
-          {job.title ?? <span className="font-mono text-sm">{job.id}</span>}
+          {job.title ?? job.topicTitle ?? (
+            <span className="font-mono text-sm">{job.id}</span>
+          )}
         </div>
         {job.description ? (
           <p className="text-sm text-neutral-600 dark:text-neutral-400 mb-2 line-clamp-2">

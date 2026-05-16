@@ -11,7 +11,8 @@ type Props = {
   tags: string[];
   coverUrls: string[];
   publishUrl: string | null;
-  renderUrl: string | null;  // download / inline-play link to this platform's mp4
+  renderUrl: string | null;        // download / inline-play link to this platform's mp4
+  downloadFilename?: string;       // friendly basename for the download attr (no extension)
 };
 
 const PLATFORM_LABEL: Record<string, string> = {
@@ -53,7 +54,11 @@ export default function PublishMaterials({
   coverUrls,
   publishUrl,
   renderUrl,
+  downloadFilename,
 }: Props) {
+  const downloadName = downloadFilename
+    ? `${downloadFilename}-${platform}.mp4`
+    : undefined;
   const platformLabel = PLATFORM_LABEL[platform] ?? platform;
   const tagsString = tags.join(", ");
 
@@ -73,7 +78,7 @@ export default function PublishMaterials({
               target="_blank"
               rel="noreferrer"
               className="underline text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100"
-              download
+              download={downloadName ?? true}
             >
               下载视频 ↓
             </a>

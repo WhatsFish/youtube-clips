@@ -94,6 +94,12 @@ export type Job = {
   publishUrl: string | null;
   publishedAt: Date | null;
   videoPath: string | null;       // filesystem path of the mp4 (outputs.path)
+  // Topic title (from topics.title) — fallback label when outputs.title
+  // (platform-specific publish title) hasn't been generated yet, or to
+  // show alongside it. For commentary mode, slug is just an opaque
+  // YouTube id (yQDNGRIpa-0) so the topic title is the only readable
+  // identifier.
+  topicTitle: string | null;
 };
 
 type Row = {
@@ -119,6 +125,7 @@ type Row = {
   publish_url: string | null;
   published_at: Date | null;
   path: string | null;
+  topic_title: string | null;
 };
 
 // One render = one Output row. But re-running edl-render.py overwrites
@@ -156,6 +163,7 @@ const SELECT_RENDERS = `
       o.published_at    AS published_at,
       o.path            AS path,
       j.edl_jsonb       AS edl_jsonb,
+      t.title           AS topic_title,
       COALESCE(jsonb_array_length(j.edl_jsonb -> 'shots'), 0) AS shot_count,
       ROW_NUMBER() OVER (
         PARTITION BY COALESCE(
@@ -177,6 +185,7 @@ const SELECT_RENDERS = `
     JOIN profiles p ON p.id = j.profile_id
     LEFT JOIN sources s
          ON s.id = NULLIF(j.edl_jsonb ->> 'source_id', '')::bigint
+    LEFT JOIN topics t ON t.id = j.topic_id
     WHERE o.status = 'ready'
   )
   SELECT * FROM ranked WHERE rn = 1
@@ -208,6 +217,7 @@ function rowToJob(r: Row): Job {
     publishUrl: r.publish_url,
     publishedAt: r.published_at,
     videoPath: r.path,
+    topicTitle: r.topic_title,
   };
 }
 
@@ -274,6 +284,7 @@ export async function loadJobPlatformVariants(id: string): Promise<Job[]> {
       o.published_at    AS published_at,
       o.path            AS path,
       j.edl_jsonb       AS edl_jsonb,
+      t.title           AS topic_title,
       COALESCE(jsonb_array_length(j.edl_jsonb -> 'shots'), 0) AS shot_count,
       '1'::text         AS render_count
     FROM outputs o
@@ -281,6 +292,7 @@ export async function loadJobPlatformVariants(id: string): Promise<Job[]> {
     JOIN profiles p ON p.id = j.profile_id
     LEFT JOIN sources s
          ON s.id = NULLIF(j.edl_jsonb ->> 'source_id', '')::bigint
+    LEFT JOIN topics t ON t.id = j.topic_id
     WHERE o.status = 'ready'
       AND ($1 IN (j.edl_jsonb ->> 'url_slug', s.external_id))
     ORDER BY o.platform

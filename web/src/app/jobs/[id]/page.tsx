@@ -18,6 +18,15 @@ export default async function JobDetail({
   if (!job) notFound();
 
   const mediaBase = `/youtube-clips/media/${encodeURIComponent(id)}`;
+  // Build a friendly download filename: slug + sanitized title.
+  // Naked slug ("yQDNGRIpa-0.mp4") is opaque after the operator queues a
+  // few; pre-pending a snippet of the title makes them sortable + identifiable.
+  const friendlyTitle = (job.title ?? job.topicTitle ?? "").trim();
+  const safeTitle = friendlyTitle
+    .replace(/[\\/:*?"<>|]/g, "")  // strip filesystem-unsafe chars
+    .replace(/\s+/g, "-")
+    .slice(0, 40);
+  const downloadStem = safeTitle ? `${id}-${safeTitle}` : id;
   // For producer-mode renders the URL slug is `orig-...` (not a YouTube
   // id), so a `youtube.com/watch?v=orig-...` link is bogus. We pick the
   // top "source" indicator by EDL production_mode.
@@ -36,8 +45,15 @@ export default async function JobDetail({
 
       <header className="mt-4 mb-6">
         <h1 className="text-2xl font-semibold tracking-tight mb-2">
-          {job.title ?? <span className="font-mono">{id}</span>}
+          {job.title ?? job.topicTitle ?? (
+            <span className="font-mono">{id}</span>
+          )}
         </h1>
+        {job.topicTitle && job.title && job.topicTitle !== job.title ? (
+          <p className="text-xs text-neutral-500 mb-1">
+            topic: {job.topicTitle}
+          </p>
+        ) : null}
         {job.description ? (
           <p className="text-sm text-neutral-600 dark:text-neutral-400">
             {job.description}
@@ -88,6 +104,7 @@ export default async function JobDetail({
           coverUrls={variant.coverPaths.map(coverPathToUrl)}
           publishUrl={variant.publishUrl}
           renderUrl={variant.videoPath ? coverPathToUrl(variant.videoPath) : null}
+          downloadFilename={downloadStem}
         />
       ))}
 
@@ -219,14 +236,14 @@ export default async function JobDetail({
       <section className="flex gap-3">
         <a
           href={`${mediaBase}/render.mp4`}
-          download={`${id}.mp4`}
+          download={`${downloadStem}.mp4`}
           className="inline-flex items-center px-4 py-2 text-sm font-medium border border-neutral-300 dark:border-neutral-700 rounded-md hover:bg-neutral-100 dark:hover:bg-neutral-900"
         >
           ⬇ Download mp4
         </a>
         <a
           href={`${mediaBase}/edl.json`}
-          download={`${id}.edl.json`}
+          download={`${downloadStem}.edl.json`}
           className="inline-flex items-center px-4 py-2 text-sm font-medium border border-neutral-300 dark:border-neutral-700 rounded-md hover:bg-neutral-100 dark:hover:bg-neutral-900"
         >
           ⬇ Download edl.json
