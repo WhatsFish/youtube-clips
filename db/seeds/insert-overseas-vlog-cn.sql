@@ -95,7 +95,7 @@ VALUES (
           "render_aspect": "9:16",
           "cover_aspect": "9:16",
           "cover_size": "1024x1920",
-          "cover_count": 4,
+          "cover_count": 0,
           "publish_prompt": "publish-douyin"
         }
       ]
