@@ -63,7 +63,7 @@ export default async function Home() {
   for (const p of profiles) orphanNames.delete(p.name);
 
   return (
-    <main className="max-w-3xl mx-auto px-5 py-12">
+    <main className="max-w-5xl mx-auto px-5 py-12">
       <header className="mb-10">
         <div className="flex items-baseline justify-between gap-4 flex-wrap">
           <div>
@@ -210,6 +210,12 @@ function DraftStatusPill({ draft }: { draft: DraftJob }) {
   );
 }
 
+// Profile sections with more than this many renders default to collapsed.
+// Big ones can be reopened with the chevron; small ones stay expanded so
+// the page is useful at first glance. Uses native <details> so no client
+// JS is needed.
+const PROFILE_COLLAPSE_THRESHOLD = 8;
+
 function ProfileSection({
   profile,
   jobs,
@@ -218,51 +224,49 @@ function ProfileSection({
   jobs: Job[];
 }) {
   const platforms = profile.config_jsonb?.output?.platforms ?? [];
-
+  const defaultOpen = jobs.length <= PROFILE_COLLAPSE_THRESHOLD;
   return (
-    <section className="mb-12">
-      <header className="mb-3 flex flex-wrap items-baseline gap-x-3 gap-y-1">
-        <h2 className="font-mono text-base font-semibold">{profile.name}</h2>
-        {!profile.active ? (
-          <span className="text-xs px-2 py-0.5 border border-neutral-300 dark:border-neutral-700 rounded text-neutral-500">
-            paused
+    <section className="mb-6">
+      <details open={defaultOpen} className="group">
+        <summary className="cursor-pointer list-none mb-3 flex flex-wrap items-baseline gap-x-3 gap-y-1 hover:opacity-80">
+          <span className="text-xs text-neutral-400 w-3 group-open:rotate-90 inline-block transition-transform">
+            ▶
           </span>
-        ) : null}
-        <span className="text-xs text-neutral-500">
-          {jobs.length} {jobs.length === 1 ? "render" : "renders"}
-        </span>
-      </header>
-
-      {profile.description ? (
-        <p className="text-sm text-neutral-600 dark:text-neutral-400 mb-3">
-          {profile.description}
-        </p>
-      ) : null}
-
-      {platforms.length > 0 ? (
-        <div className="mb-3 flex flex-wrap gap-1.5">
-          {platforms.map((p) => (
-            <span
-              key={p}
-              className="text-xs px-2 py-0.5 bg-neutral-100 dark:bg-neutral-800 rounded"
-            >
-              {platformLabel(p)}
+          <h2 className="font-mono text-base font-semibold">{profile.name}</h2>
+          {!profile.active ? (
+            <span className="text-xs px-2 py-0.5 border border-neutral-300 dark:border-neutral-700 rounded text-neutral-500">
+              paused
             </span>
-          ))}
-        </div>
-      ) : null}
+          ) : null}
+          <span className="text-xs text-neutral-500">
+            {jobs.length} {jobs.length === 1 ? "render" : "renders"}
+          </span>
+          {platforms.length > 0 ? (
+            <span className="text-xs text-neutral-500">
+              · {platforms.map(platformLabel).join(" · ")}
+            </span>
+          ) : null}
+        </summary>
+        <div className="ml-5">
+          {profile.description ? (
+            <p className="text-xs text-neutral-600 dark:text-neutral-400 mb-3 line-clamp-2">
+              {profile.description}
+            </p>
+          ) : null}
 
-      {jobs.length === 0 ? (
-        <div className="border border-dashed border-neutral-300 dark:border-neutral-700 rounded-md p-4 text-sm text-neutral-500">
-          No renders yet for this profile.
+          {jobs.length === 0 ? (
+            <div className="border border-dashed border-neutral-300 dark:border-neutral-700 rounded-md p-3 text-xs text-neutral-500">
+              No renders yet for this profile.
+            </div>
+          ) : (
+            <ul className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              {jobs.map((j) => (
+                <JobCard key={j.id} job={j} />
+              ))}
+            </ul>
+          )}
         </div>
-      ) : (
-        <ul className="space-y-2">
-          {jobs.map((j) => (
-            <JobCard key={j.id} job={j} />
-          ))}
-        </ul>
-      )}
+      </details>
     </section>
   );
 }
@@ -272,19 +276,19 @@ function JobCard({ job }: { job: Job }) {
     <li className="border border-neutral-200 dark:border-neutral-800 rounded-md hover:bg-neutral-100 dark:hover:bg-neutral-900 transition">
       <Link
         href={`/jobs/${encodeURIComponent(job.id)}`}
-        className="block p-4"
+        className="block p-3"
       >
-        <div className="font-medium text-base mb-1">
+        <div className="font-medium text-sm mb-1 line-clamp-2">
           {job.title ?? job.topicTitle ?? (
-            <span className="font-mono text-sm">{job.id}</span>
+            <span className="font-mono text-xs">{job.id}</span>
           )}
         </div>
         {job.description ? (
-          <p className="text-sm text-neutral-600 dark:text-neutral-400 mb-2 line-clamp-2">
+          <p className="text-xs text-neutral-600 dark:text-neutral-400 mb-1.5 line-clamp-1">
             {job.description}
           </p>
         ) : null}
-        <div className="text-xs text-neutral-500 flex flex-wrap gap-x-4 gap-y-1">
+        <div className="text-[10px] text-neutral-500 flex flex-wrap gap-x-3 gap-y-0.5">
           <span>{job.shotCount} shots</span>
           {(job.edl?.sources?.length ?? 1) > 1 ? (
             <span>{job.edl!.sources!.length} sources</span>
@@ -296,7 +300,6 @@ function JobCard({ job }: { job: Job }) {
           ) : null}
           <span>{fmtMb(job.renderSizeBytes)}</span>
           <span>{fmtTime(job.renderMtime)}</span>
-          <span className="font-mono">{job.id}</span>
         </div>
       </Link>
     </li>
