@@ -40,7 +40,7 @@ from pipeline.claude_io import call_claude, extract_json
 from pipeline.transcript import parse_vtt, format_transcript
 from pipeline.downloader import download, BotWallError, CookiesMissingError, COOKIES_FILE
 from pipeline.youtube_search import enrich
-from pipeline import events
+from pipeline import events, db
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DISCOVER_BASE = Path("/video/youtube-clips/outputs/discovered")
@@ -206,10 +206,38 @@ def main() -> int:
     # let the EDL stage refine.
     profile = fetch_profile(args.profile)
     mode = ((profile.config or {}).get("channel") or {}).get("production_mode") or "commentary"
+
+    # Resolve a human-readable topic_title before opening the run. With
+    # --video-id we used to fall back to the bare YouTube id, which made
+    # the running widget show "wTTjQ5l5gyA" — opaque. Look up the topic
+    # by source_link (an operator usually approves the topic on /topics
+    # first; topics.metadata.source_link contains the YT watch URL) and
+    # use its title. Falls back to args.title (if passed) or the video_id.
+    topic_title = args.topic
+    if not topic_title and args.video_id:
+        try:
+            with db.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT title FROM topics
+                     WHERE profile_id = %s
+                       AND metadata->>'source_link' LIKE '%%' || %s || '%%'
+                     ORDER BY approved_at DESC NULLS LAST, id DESC
+                     LIMIT 1
+                    """,
+                    (profile.id, args.video_id),
+                )
+                row = cur.fetchone()
+                if row:
+                    topic_title = row["title"]
+        except Exception as e:
+            print(f"  [warn] topic lookup failed: {e}", flush=True)
+    topic_title = topic_title or args.title or args.video_id or "(unknown)"
+
     run_id = events.start_run(
         profile_id=profile.id,
         kind=mode if mode in ("commentary", "synthesis") else "commentary",
-        topic_title=args.topic or args.video_id or "(unknown)",
+        topic_title=topic_title,
     )
     events.register_atexit(run_id)
     print(f"run_id: {run_id}")
