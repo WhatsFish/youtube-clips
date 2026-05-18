@@ -18,6 +18,52 @@ const TAB_LABEL: Record<Tab, string> = {
 // named "all".
 const ALL_PROFILES = "__all__";
 
+type SortMode = "time" | "profile";
+
+const SORT_LABEL: Record<SortMode, string> = {
+  time: "按时间",
+  profile: "按频道",
+};
+
+/** Bucket a topic by how old it is. Each label is one section heading.
+ *  Recent buckets are finer-grained so today's batch stands alone. */
+function timeBucket(generatedAt: Date | string): string {
+  const d = typeof generatedAt === "string" ? new Date(generatedAt) : generatedAt;
+  const ageDays = Math.floor((Date.now() - d.getTime()) / (24 * 3600 * 1000));
+  if (ageDays === 0) return "今天";
+  if (ageDays === 1) return "昨天";
+  if (ageDays === 2) return "前天";
+  if (ageDays <= 6) return "本周早些时候";
+  if (ageDays <= 13) return "上周";
+  if (ageDays <= 30) return "本月";
+  return "更早";
+}
+
+const BUCKET_ORDER = [
+  "今天",
+  "昨天",
+  "前天",
+  "本周早些时候",
+  "上周",
+  "本月",
+  "更早",
+];
+
+function groupByTimeBucket(topics: Topic[]): Map<string, Topic[]> {
+  const m = new Map<string, Topic[]>();
+  for (const t of topics) {
+    const k = timeBucket(t.generatedAt);
+    if (!m.has(k)) m.set(k, []);
+    m.get(k)!.push(t);
+  }
+  // Re-emit in fixed chronological order regardless of insertion order
+  const out = new Map<string, Topic[]>();
+  for (const k of BUCKET_ORDER) {
+    if (m.has(k)) out.set(k, m.get(k)!);
+  }
+  return out;
+}
+
 function uniqueProfiles(topics: Topic[]): string[] {
   const set = new Set<string>();
   for (const t of topics) set.add(t.profileName);
@@ -52,6 +98,9 @@ export default function TopicsView({
     pending.length > 0 ? "pending" : waiting.length > 0 ? "waiting" : "rendered";
   const [tab, setTab] = useState<Tab>(initial);
   const [profileFilter, setProfileFilter] = useState<string>(ALL_PROFILES);
+  // Default to timeline so "今天 (7) / 昨天 (8) / ..." headers tell the
+  // operator at a glance whether the discover cron has added new candidates.
+  const [sortMode, setSortMode] = useState<SortMode>("time");
 
   const buckets: Record<Tab, Topic[]> = { pending, waiting, rendered };
 
@@ -96,26 +145,45 @@ export default function TopicsView({
         })}
       </nav>
 
-      {visibleProfiles.length > 1 && (
-        <div className="mb-4 flex flex-wrap gap-1.5">
-          <FilterChip
-            label="全部"
-            count={buckets[tab].length}
-            active={effectiveFilter === ALL_PROFILES}
-            onClick={() => setProfileFilter(ALL_PROFILES)}
-          />
-          {visibleProfiles.map((p) => (
+      <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-2">
+        {visibleProfiles.length > 1 && (
+          <div className="flex flex-wrap gap-1.5">
             <FilterChip
-              key={p}
-              label={p}
-              count={profileCounts.get(p) ?? 0}
-              active={effectiveFilter === p}
-              onClick={() => setProfileFilter(p)}
-              mono
+              label="全部"
+              count={buckets[tab].length}
+              active={effectiveFilter === ALL_PROFILES}
+              onClick={() => setProfileFilter(ALL_PROFILES)}
             />
+            {visibleProfiles.map((p) => (
+              <FilterChip
+                key={p}
+                label={p}
+                count={profileCounts.get(p) ?? 0}
+                active={effectiveFilter === p}
+                onClick={() => setProfileFilter(p)}
+                mono
+              />
+            ))}
+          </div>
+        )}
+        <div className="ml-auto flex items-center gap-1 text-xs text-neutral-500">
+          排序：
+          {(Object.keys(SORT_LABEL) as SortMode[]).map((m) => (
+            <button
+              key={m}
+              onClick={() => setSortMode(m)}
+              className={
+                "px-2 py-0.5 rounded transition " +
+                (sortMode === m
+                  ? "bg-neutral-200 dark:bg-neutral-800 text-neutral-900 dark:text-neutral-100"
+                  : "hover:bg-neutral-100 dark:hover:bg-neutral-900")
+              }
+            >
+              {SORT_LABEL[m]}
+            </button>
           ))}
         </div>
-      )}
+      </div>
 
       {filtered.length === 0 ? (
         <div className="border border-dashed border-neutral-300 dark:border-neutral-700 rounded-md p-6 text-sm text-neutral-500">
@@ -130,9 +198,40 @@ export default function TopicsView({
           {tab === "waiting" && "没有待制作 topic。通过的 topic 会出现在这里直到渲染完成。"}
           {tab === "rendered" && "还没有视频做出来。"}
         </div>
+      ) : sortMode === "time" ? (
+        <TimeGrouped topics={filtered} variant={tab} />
       ) : (
-        <ProfileGrouped topics={filtered} variant={tab} singleProfile={effectiveFilter !== ALL_PROFILES} />
+        <ProfileGrouped
+          topics={filtered}
+          variant={tab}
+          singleProfile={effectiveFilter !== ALL_PROFILES}
+        />
       )}
+    </>
+  );
+}
+
+function TimeGrouped({ topics, variant }: { topics: Topic[]; variant: Tab }) {
+  const groups = groupByTimeBucket(topics);
+  return (
+    <>
+      {Array.from(groups.entries()).map(([bucket, ts]) => (
+        <div key={bucket} className="mb-5">
+          <h3 className="text-sm font-semibold mb-2 text-neutral-700 dark:text-neutral-300 flex items-baseline gap-2">
+            <span>{bucket}</span>
+            <span className="text-xs text-neutral-500 font-normal">({ts.length})</span>
+          </h3>
+          {variant === "pending" ? (
+            <TopicGrid topics={ts} />
+          ) : (
+            <ul className="space-y-1.5">
+              {ts.map((t) => (
+                <ApprovedTopicRow key={t.id} topic={t} variant={variant} />
+              ))}
+            </ul>
+          )}
+        </div>
+      ))}
     </>
   );
 }

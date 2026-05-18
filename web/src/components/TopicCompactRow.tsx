@@ -4,6 +4,19 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import type { Topic } from "@/lib/topics";
 
+function ageLabelFor(ageDays: number, d: Date): string {
+  // Show HH:MM in Asia/Tokyo for recent ones so you can see cron tick time.
+  const hhmm = d.toLocaleTimeString("zh-CN", {
+    timeZone: "Asia/Tokyo",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+  if (ageDays === 0) return `今天 ${hhmm}`;
+  if (ageDays === 1) return `昨天 ${hhmm}`;
+  if (ageDays === 2) return `前天 ${hhmm}`;
+  return `${ageDays}d`;
+}
+
 const FEED_LABEL: Record<string, string> = {
   zhihu_hot: "知乎热榜",
   thepaper_featured: "澎湃 featured",
@@ -49,12 +62,14 @@ export default function TopicCompactRow({ topic }: { topic: Topic }) {
   const feedLabel = feed ? (FEED_LABEL[feed] ?? feed) : null;
   const hasDetail =
     !!topic.description || !!topic.metadata?.suggested_angle || !!feedLabel;
-  // Only show an age chip once topic is >=3 days old — most newly-pushed
-  // candidates are <24h and showing "<1d" everywhere is just noise.
-  const ageDays = Math.floor(
-    (Date.now() - new Date(topic.generatedAt).getTime()) / (24 * 3600 * 1000),
-  );
-  const showAge = ageDays >= 3;
+  // Always show a time chip — operator wants to spot "today's batch" at a
+  // glance. <1d = "今天 HH:MM" (so you can see the cron run time), 1d-2d
+  // labelled "昨天" / "前天", else "Nd". Stale (>=7d) gets amber emphasis.
+  const generatedAt = new Date(topic.generatedAt);
+  const ageMs = Date.now() - generatedAt.getTime();
+  const ageDays = Math.floor(ageMs / (24 * 3600 * 1000));
+  const ageLabel = ageLabelFor(ageDays, generatedAt);
+  const ageStale = ageDays >= 7;
 
   return (
     <li className="border border-neutral-200 dark:border-neutral-800 rounded-md hover:border-neutral-300 dark:hover:border-neutral-700 transition">
@@ -77,19 +92,19 @@ export default function TopicCompactRow({ topic }: { topic: Topic }) {
             #{topic.id}
           </span>
           <span className="truncate">{topic.title}</span>
-          {showAge && (
-            <span
-              className={
-                "text-[10px] flex-shrink-0 px-1 rounded font-mono " +
-                (ageDays >= 7
-                  ? "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-400"
+          <span
+            className={
+              "text-[10px] flex-shrink-0 px-1 rounded font-mono " +
+              (ageStale
+                ? "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-400"
+                : ageDays === 0
+                  ? "bg-green-50 text-green-700 dark:bg-green-950 dark:text-green-400"
                   : "text-neutral-400")
-              }
-              title={`生成于 ${new Date(topic.generatedAt).toLocaleString("zh-CN")}`}
-            >
-              {ageDays}d
-            </span>
-          )}
+            }
+            title={`生成于 ${generatedAt.toLocaleString("zh-CN")}`}
+          >
+            {ageLabel}
+          </span>
         </button>
         <div className="flex gap-1 flex-shrink-0">
           <button
