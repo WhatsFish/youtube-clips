@@ -219,6 +219,43 @@ def read_bilibili_transcript(bvid: str) -> dict:
     }
 
 
+def localize_in_video(
+    video_id: str,
+    source: str,
+    target_desc: str,
+    target_dur_sec: float = 7.0,
+) -> dict:
+    """Find the best timestamp range in a source video matching target_desc.
+
+    Two-tier strategy:
+      Tier A — caption / transcript fuzzy match. Cheap, works well when
+        target_desc is concept-rich (e.g. "Jensen's advice to graduates
+        about luck and hardship" — typically said verbatim).
+      Tier B — coarse 60s + fine 5s vision scan. Used when caption hits
+        below 0.50 confidence or transcript missing. Reliable for visual
+        moments where the speaker doesn't describe their own action
+        (e.g. "Jensen holding up a Blackwell GPU").
+
+    Args:
+        video_id: BVid (Bilibili) or 11-char YouTube id.
+        source: "bilibili" or "youtube".
+        target_desc: detailed sentence describing the target moment.
+            Detailed > terse; "Jensen Huang on stage lifting a Blackwell
+            motherboard with both hands" > "Blackwell unveil".
+        target_dur_sec: desired clip duration (default 7s, cap 8 typically).
+
+    Returns:
+        dict with start_sec / end_sec / confidence / method / excerpt /
+        source_url. method ∈ {caption, vision, vision_coarse_only,
+        caption_low_conf, none}. confidence in [0, 1]. `error` field
+        populated when localization failed.
+    """
+    # Lazy import — the implementation pulls in ffmpeg / Claude vision and
+    # we want this tool module to stay cheap to import at MCP server init.
+    from ..archival import localize_in_video as _impl
+    return _impl(video_id, source, target_desc, target_dur_sec)
+
+
 def read_youtube_transcript(video_id: str, language: str = "en") -> dict:
     """Fetch YouTube auto-captions as timestamped transcript.
 
