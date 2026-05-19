@@ -38,6 +38,9 @@ notes: |
 - **`fetch_rss_feed(feed_id)`** —— RSS 源最新条目（`zhihu_hot` / `thepaper_featured` / `36kr_latest`）。
 - **`preview_pexels(query, max_results)`** —— **写 visual_brief_en 前先 verify**：Pexels 真有没有这个画面？没有就直接 emit `asset_strategy="ai"`，不要瞎写 Pexels 让 render 时翻车。
 - **`search_person_image(name)`** —— 搜真实人物照片（DDG 图片）。**仅在你确定要 emit `asset_strategy="person"` 时调来验证有没有合适图**，不是写脚本时随便用。
+- **`search_youtube_archival(query)`** / **`search_bilibili_archival(query)`** —— **找真实存档视频**（搬运 / 官方源 / 演讲录像）。返回 metadata 含 `is_official`（★ 标注，官方账号）。用于「画面必须是真实历史镜头」的场景：Jensen 在 GTC 举起 Blackwell、Sam Altman 国会作证、DeepSeek 发布会等。**B 站优先**（NVIDIA英伟达 / Apple / 央视 等官方账号在 B 站有完整中文译制版，YouTube 没有），YouTube 兜底（英文原始报道）。
+- **`read_youtube_transcript(video_id)`** / **`read_bilibili_transcript(bvid)`** —— 拉一个候选源的 timestamped 字幕做内容预览，**搜到候选后用这条验证是不是想要的视频**。
+- **`localize_in_video(video_id, source, target_desc, target_dur_sec)`** —— **找到具体时间戳**。返回 `{start_sec, end_sec, confidence, method, excerpt}`。内部两层：字幕 fuzzy（cheap） + 帧 vision（贵但稳）。**只在确定要 emit `asset_strategy="archival"` 时调用**。`target_desc` 要细：「Jensen 在台上举起 Blackwell 主板」 > 「Blackwell 发布」。**视觉动作类**（举起 / 上台 / 展示）的 target 内部自动跳过字幕走 vision。
 - **`read_image(url)`** —— 看任何公开图（web_search 找到的配图、Pexels 缩略图）。决定 visual_brief 是否对得上现实形象时用。
 - **`read_youtube_thumbnail(video_id)`** —— 看 YouTube 视频缩略图。研究同类视频是怎么挂钩子的（视觉层面）。
 
@@ -64,16 +67,33 @@ notes: |
 
 ## 每个 shot 选素材来源（asset_strategy）
 
-四种来源，**按 ROI 自决**：
+五种来源，**按 ROI 自决**：
 
 - `"pexels"`（通用场景默认）—— Pexels 库存视频，免费 + 即时。偏西方审美，**中文文化具体场景找不到**。**绝不能用 pexels 代替具体真实人物**——它返回的"商务人士"是随机外国人脸。
 - `"image"`（**静态画面 / 隐喻 / 不需要运动的场景**）—— CogView 文生图 + ken-burns 推拉。免费、~10s 出图、右下小水印。**只适合本质就是静态的画面**：文档 / 招牌 / 静物 / 海报 / 抽象隐喻 / 远景建筑。**不要用 image 画具体真实人物**——CogView 会画歪、政治人物可能被审核拦。
 - `"ai"`（**需要真实运动的中文场景**）—— Doubao Seedance 1.0-pro-fast，~$0.06/5s clip，~24s 生成。**真视频，有自然运动**：动作 / 人流 / 车流 / 风吹动。**不要用 ai 画具体真实人物**——同样会画歪。
-- **`"person"`（画面要出现具体真实人物时的唯一选项）**—— DDG 图片搜索拿真实公开照片 + ken-burns。**任何有名有姓的真实人物**（鲍威尔、沃什、马斯克、习近平、特朗普、某某 CEO/学者）都**必须**走这一档。schema 多填一个 `person_name` 字段（中文名 / 英文名都行，国际人物用英文搜索效果好）。
+- **`"person"`（具体真实人物的静态形象）**—— DDG 图片搜索拿真实公开照片 + ken-burns。**任何有名有姓的真实人物**（鲍威尔、沃什、马斯克、习近平、特朗普、某某 CEO/学者）的肖像 shot 走这一档。schema 多填 `person_name` 字段。
+- **`"archival"`（真实历史镜头 / 现场录像）** —— 从 YouTube / Bilibili 已有视频里**剪取真实的 5-8s 片段**。用于「这个人物做了某件事 / 这个事件发生时的画面」——Jensen 在 GTC 上举起 Blackwell、Sam Altman 国会作证、DeepSeek 发布会、习特会握手等。**比 person 更强**：person 只是静态照片 + 假动画，archival 是**真实视频画面**，可信度 + 表现力都高一档。schema 要填：`archival_source` (youtube|bilibili) / `archival_video_id` (BVid 或 YT id) / `archival_start_sec` / `archival_dur_sec` (≤ 8) / `archival_excerpt` (人类可读的内容描述)。
+
+**用 archival 的工作流**（重要）：
+
+1. **search**：`search_bilibili_archival(中文 query)` 优先 + `search_youtube_archival(英文 query)` 兜底。看返回 metadata：`is_official: true` 的官方源（★）优先选。**不要选搬运 / 二创 / 解说 / reaction 视频**——那些是别人的二手内容。
+2. **verify**：可选用 `read_*_transcript(id)` 拉字幕预览，确认这就是想要的源（标题不一定准）。
+3. **localize**：`localize_in_video(video_id, source, target_desc, target_dur_sec)` 拿到具体时间戳。`target_desc` 写**具体视觉动作 / 场景**（「Jensen 在台上举起 Blackwell 主板，双手向观众展示」），不要写抽象主题。`target_dur_sec` 默认 6-7s。返回 `{start_sec, end_sec, confidence, method, excerpt}`，记下来填到 shot 的 archival_* 字段。
+4. **emit shot** 时把上面收集的字段填齐。**archival_excerpt 要填**——这是给操作员人工审核用的，标记「这段我从哪个源剪了什么」。
+
+**archival 的 ROI**：
+- 真实人物的**动作 / 演讲 / 现场画面** → archival（最高优先级，YT / B 站官方源都有）
+- 单纯展示人物**肖像**（不需要他在做什么） → person
+- 找不到合适 archival 源（小众人物 / 国内未公开演讲 / 太新的事件） → 退到 person
+- 完全没人物 → 走 pexels / image / ai
 
 ROI 判断模板（按顺序问）：
-- 画面里要不要**展示具体真实人物的形象**？
-  → 要 → **`person`**（**强约束**：禁止用 pexels/image/ai 代替）
+- 画面要不要**真实的人在做某事 / 某个真实事件**？(Jensen 演讲 / 习特会 / 苹果发布会画面)
+  → 要 → **`archival`**（最高优先，搜 B 站 + YT 官方源）
+  → 找不到合适源 → 退 person（人物肖像）或 image（抽象隐喻代替）
+- 画面要**展示具体真实人物的形象**（不动）？
+  → 要 → **`person`**
   → 不要 → 进入下一题
 - 画面**是中文具体场景且需要真实运动**？(人在走 / 车在开 / 工人在做事)
   → 是 → `ai`（**Doubao 真视频值这个钱**）
@@ -84,6 +104,8 @@ ROI 判断模板（按顺序问）：
 - 画面**有运动但是通用场景**？(城市街景 / 打字 / 吃饭 / 通用工厂)
   → 是 → `pexels`
   → 否 → 默认 `pexels`
+
+**archival 数量约束**：单视频不超过 **40% 的 shot** 走 archival（避免变成纯剪辑视频 + 平台版权检测风险）。其它 shot 还是 image / pexels / ai 混合。
 
 **理想比例**：4-6 pexels + 2-3 image + 1-3 ai + 必要的 person。不要 100% 任何一档。
 
@@ -152,8 +174,13 @@ JSON schema:
     {{
       "narration": "本 shot 的中文解说",
       "visual_brief_en": "按 asset_strategy 长度不同，见上方说明",
-      "asset_strategy": "pexels" | "image" | "ai" | "person",
+      "asset_strategy": "pexels" | "image" | "ai" | "person" | "archival",
       "person_name": "（仅当 asset_strategy=person 时填，国际人物用英文）",
+      "archival_source": "（仅当 archival 时填）youtube | bilibili",
+      "archival_video_id": "（仅当 archival 时填）BVid 或 11 位 YouTube id",
+      "archival_start_sec": "（仅当 archival 时填）整数 / 浮点秒",
+      "archival_dur_sec": "（仅当 archival 时填）4-8 秒，硬封顶 8",
+      "archival_excerpt": "（仅当 archival 时填）人类可读的内容描述，给操作员审核用",
       "outline_ref": "对应 OUTLINE.outline 索引（0-based）",
       "purpose": "选这段画面的原因"
     }}

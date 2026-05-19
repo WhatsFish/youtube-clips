@@ -617,6 +617,96 @@ def _acquire_one_person(
     }
 
 
+def _acquire_one_archival(
+    sh: dict,
+    i: int,
+    assets_dir: Path,
+    run_id: int | None = None,
+) -> dict:
+    """Extract a 5-8s segment from a real archival source video.
+
+    Reads the shot's archival_* fields (set by the agent during Stage 2
+    after calling search_*_archival + localize_in_video), downloads the
+    source (cached) and cuts the requested time range, strips audio
+    so renderer's narration mix is unaffected.
+
+    Hard cap: dur ≤ 8s (fair-use buffer).
+
+    Required shot fields:
+      - archival_source       "youtube" | "bilibili"
+      - archival_video_id     BVid or 11-char YouTube id
+      - archival_start_sec    float
+      - archival_dur_sec      float (capped to 8 here)
+
+    Raises ValueError when fields missing — dispatcher falls back to
+    person/pexels.
+    """
+    from pipeline.archival import ensure_downloaded
+
+    arch_source = (sh.get("archival_source") or "").strip()
+    arch_vid = (sh.get("archival_video_id") or "").strip()
+    arch_start = sh.get("archival_start_sec")
+    arch_dur = sh.get("archival_dur_sec")
+    if arch_source not in ("youtube", "bilibili") or not arch_vid:
+        raise ValueError(
+            f"shot {i}: asset_strategy=archival but archival_source / "
+            f"archival_video_id not set (got source={arch_source!r}, vid={arch_vid!r})"
+        )
+    if arch_start is None or arch_dur is None:
+        raise ValueError(
+            f"shot {i}: archival_start_sec or archival_dur_sec missing"
+        )
+    arch_start = float(arch_start)
+    arch_dur = max(2.0, min(8.0, float(arch_dur)))   # hard cap [2, 8] seconds
+
+    print(
+        f"  s{i:02d} archival ({arch_source}:{arch_vid}) @ "
+        f"{arch_start:.1f}s for {arch_dur:.1f}s — checking cache..."
+    )
+    t0 = time.monotonic()
+    src_mp4 = ensure_downloaded(arch_vid, arch_source)
+    print(f"  s{i:02d} source ready in {time.monotonic()-t0:.0f}s: {src_mp4}")
+
+    # Cut the segment. Strip audio (our narration mix is separate).
+    target = assets_dir / f"clip-{i:02d}-archival-{arch_source}-{arch_vid}.mp4"
+    t1 = time.monotonic()
+    subprocess.run(
+        [
+            "ffmpeg", "-y", "-loglevel", "error",
+            "-ss", f"{arch_start:.3f}",
+            "-i", str(src_mp4),
+            "-t", f"{arch_dur:.3f}",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-an",
+            "-preset", "fast", "-crf", "23",
+            str(target),
+        ],
+        check=True,
+    )
+    print(
+        f"  s{i:02d} archival cut ready in {time.monotonic()-t1:.0f}s: {target}"
+    )
+
+    actual_dur = _ffprobe_seconds(target)
+    page_url = (
+        f"https://www.bilibili.com/video/{arch_vid}"
+        if arch_source == "bilibili"
+        else f"https://www.youtube.com/watch?v={arch_vid}&t={int(arch_start)}"
+    )
+    return {
+        "video_id": f"archival-{arch_source}-{arch_vid}-{int(arch_start)}",
+        "title": sh.get("archival_excerpt") or f"{arch_source} {arch_vid}",
+        "channel": f"archival ({arch_source})",
+        "role": "primary" if i == 0 else "supplement",
+        "path": str(target),
+        "duration_sec": actual_dur,
+        "page_url": page_url,
+        "asset_strategy": "archival",
+        "archival_source": arch_source,
+        "archival_video_id": arch_vid,
+        "archival_start_sec": arch_start,
+    }
+
+
 def _ffprobe_seconds(path: Path) -> float:
     """Best-effort duration probe; returns 0.0 if ffprobe unavailable."""
     try:
@@ -681,7 +771,36 @@ def _acquire_assets(
                         shot_idx=i, video_id=s.get("video_id"))
             return s
 
-        if chosen == "person":
+        if chosen == "archival":
+            try:
+                src = _acquire_one_archival(sh, i, assets_dir, run_id=run_id)
+                events.emit(run_id, "acquire", "done",
+                            f"s{i:02d} {src.get('video_id')}",
+                            shot_idx=i, video_id=src.get("video_id"))
+            except Exception as e:
+                # Archival is the highest-stakes strategy (real footage of
+                # named subjects/events). When it fails we'd rather degrade
+                # to "person" (real photo + ken-burns) than pexels (generic
+                # stock that breaks the illusion).
+                print(
+                    f"  s{i:02d} archival failed ({type(e).__name__}: {e}); "
+                    f"trying person fallback", flush=True,
+                )
+                events.emit(run_id, "acquire", "fail",
+                            f"s{i:02d} archival failed: {e}",
+                            shot_idx=i)
+                try:
+                    src = _acquire_one_person(sh, i, assets_dir, run_id=run_id)
+                    events.emit(run_id, "acquire", "done",
+                                f"s{i:02d} {src.get('video_id')}",
+                                shot_idx=i, video_id=src.get("video_id"))
+                except Exception as e2:
+                    print(
+                        f"  s{i:02d} person fallback also failed ({e2}); "
+                        f"final fallback to pexels", flush=True,
+                    )
+                    src = _fallback_pexels(f"person failed: {e2}")
+        elif chosen == "person":
             try:
                 src = _acquire_one_person(sh, i, assets_dir, run_id=run_id)
                 events.emit(run_id, "acquire", "done",
@@ -811,6 +930,15 @@ def _run_phase_script(*, profile, topic: str) -> dict:
             "visual_brief_en": sh.get("visual_brief_en"),
             "asset_strategy": sh.get("asset_strategy"),
             "person_name": sh.get("person_name"),
+            # archival-strategy carry-throughs (set by the agent in Stage 2
+            # after calling search_*_archival + localize_in_video). Survive
+            # the script_draft → render handoff so Stage 3 acquire has
+            # everything it needs.
+            "archival_source": sh.get("archival_source"),
+            "archival_video_id": sh.get("archival_video_id"),
+            "archival_start_sec": sh.get("archival_start_sec"),
+            "archival_dur_sec": sh.get("archival_dur_sec"),
+            "archival_excerpt": sh.get("archival_excerpt"),
         })
     edl = {
         "decision": "make",
