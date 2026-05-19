@@ -32,6 +32,11 @@ DEFAULT_MCP_TOOLS = [
     "mcp__ytclips__read_image",
     "mcp__ytclips__read_youtube_thumbnail",
     "mcp__ytclips__search_person_image",
+    # Archival source pipeline (producer mode asset_strategy="archival")
+    "mcp__ytclips__search_youtube_archival",
+    "mcp__ytclips__search_bilibili_archival",
+    "mcp__ytclips__read_youtube_transcript",
+    "mcp__ytclips__read_bilibili_transcript",
 ]
 # `list_recent_videos` removed from defaults 2026-05-14 per operator —
 # cross-episode callbacks caused factual drift (referenced publish-tier

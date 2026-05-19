@@ -33,6 +33,12 @@ from pipeline.tools.channel_tools import list_recent_videos
 from pipeline.tools.pexels_tools import preview_pexels
 from pipeline.tools.image_tools import read_image, read_youtube_thumbnail
 from pipeline.tools.person_search import search_person_image
+from pipeline.tools.archival_tools import (
+    search_youtube_archival,
+    search_bilibili_archival,
+    read_youtube_transcript,
+    read_bilibili_transcript,
+)
 
 
 mcp = FastMCP(
@@ -60,6 +66,12 @@ mcp.tool()(preview_pexels)
 mcp.add_tool(read_image, structured_output=False)
 mcp.add_tool(read_youtube_thumbnail, structured_output=False)
 mcp.tool()(search_person_image)
+# Archival-source search + transcript fetch (used by asset_strategy="archival"
+# in producer mode for grounding shots in real footage).
+mcp.tool()(search_youtube_archival)
+mcp.tool()(search_bilibili_archival)
+mcp.tool()(read_youtube_transcript)
+mcp.tool()(read_bilibili_transcript)
 
 
 def main() -> None:
