@@ -1,0 +1,138 @@
+<!doctype html>
+<!--
+  Exemplar: schematic spatial comparison (operator-flagged "画示意图，不堆数字").
+  Use this pattern when narration mentions物理尺寸 / 空间比例 / 余量 / 容纳。
+  Don't just list numbers — draw it.
+
+  Example narration this fits:
+    「车宽 1.95 米，车位 2.4 米，两边留给开车门的余量只有四十多厘米。」
+  Result: two scaled rectangles + animated door arcs + annotation.
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="_styles.css">
+<style>
+  .kicker { opacity:0; transition: opacity var(--t-mid) ease; margin-bottom: 6px; }
+  .title { margin-bottom: 28px;
+           opacity:0; transform: translateY(15px);
+           transition: opacity var(--t-slow) var(--ease-snap),
+                       transform var(--t-slow) var(--ease-snap); }
+
+  .scene {
+    flex: 1; display: flex; flex-direction: column; align-items: center;
+    justify-content: center; gap: 24px;
+  }
+  .stage-box {
+    position: relative;
+    width: 800px; height: 280px;
+    border: 2px dashed var(--border-med);
+    border-radius: var(--radius-chip);
+    background: var(--card-bg);
+  }
+  .park-label {
+    position: absolute; top: -28px; left: 50%; transform: translateX(-50%);
+    font-size: 18px; color: var(--text-soft);
+    opacity: 0; transition: opacity var(--t-mid) ease;
+  }
+  .park-width {
+    position: absolute; bottom: -38px; left: 50%; transform: translateX(-50%);
+    font-size: 16px; color: var(--text-muted);
+    opacity: 0; transition: opacity var(--t-mid) ease;
+  }
+  .car {
+    position: absolute; top: 50%; left: 50%;
+    transform: translate(-50%, -50%) scale(0.6);
+    width: 650px; height: 220px;   /* 1.95/2.4 ratio of stage-box 800px */
+    background: linear-gradient(135deg, var(--accent-primary), var(--accent-tertiary));
+    border-radius: 20px;
+    opacity: 0;
+    transition: opacity var(--t-mid) ease,
+                transform 1500ms var(--ease-bounce);
+    box-shadow: 0 10px 40px rgba(255, 138, 76, 0.25);
+  }
+  .car-label {
+    position: absolute; top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 22px; font-weight: 700; color: var(--text-strong);
+    letter-spacing: 1px;
+  }
+  .gap {
+    position: absolute; top: 50%; transform: translateY(-50%);
+    height: 220px; width: 75px;
+    display: flex; align-items: center; justify-content: center;
+    flex-direction: column; gap: 6px;
+    opacity: 0; transition: opacity var(--t-slow) ease;
+  }
+  .gap-l { left: 0; }
+  .gap-r { right: 0; }
+  .gap-line {
+    width: 2px; height: 60%;
+    background: var(--accent-pink);
+    box-shadow: 0 0 12px rgba(255, 107, 157, 0.6);
+  }
+  .gap-num {
+    font-size: 22px; font-weight: 700;
+    color: var(--accent-pink);
+    font-variant-numeric: tabular-nums;
+  }
+  .gap-cap {
+    font-size: 13px; color: var(--text-muted);
+  }
+  .summary {
+    margin-top: 36px;
+    font-size: 22px; color: var(--text-soft);
+    text-align: center;
+    opacity: 0; transform: translateY(10px);
+    transition: opacity var(--t-mid) ease, transform var(--t-mid) ease;
+  }
+  .summary b { color: var(--accent-pink); font-weight: 700; }
+
+  .playing .kicker { opacity: 1; }
+  .playing .title { opacity: 1; transform: translateY(0); transition-delay: 300ms; }
+  .playing .stage-box .park-label { opacity: 1; transition-delay: 1100ms; }
+  .playing .stage-box .park-width { opacity: 1; transition-delay: 1100ms; }
+  .playing .car {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+    transition-delay: 1500ms;
+  }
+  .playing .gap { opacity: 1; transition-delay: 3300ms; }
+  .playing .summary { opacity: 1; transform: translateY(0); transition-delay: 4500ms; }
+</style>
+</head>
+<body>
+<div class="stage" id="stage">
+  <div class="kicker">实际场景 · 按比例</div>
+  <div class="title">车宽吃掉了 81% 的车位</div>
+
+  <div class="scene">
+    <div class="stage-box">
+      <div class="park-label">标准车位</div>
+      <div class="park-width">宽 2.4 米</div>
+
+      <div class="gap gap-l">
+        <div class="gap-line"></div>
+        <div class="gap-num">22 cm</div>
+        <div class="gap-cap">左侧</div>
+      </div>
+
+      <div class="car">
+        <div class="car-label">现代 SUV · 1.95 米</div>
+      </div>
+
+      <div class="gap gap-r">
+        <div class="gap-line"></div>
+        <div class="gap-num">22 cm</div>
+        <div class="gap-cap">右侧</div>
+      </div>
+    </div>
+
+    <div class="summary">每侧只剩 <b>22 厘米</b>——一个人侧着身才挤得过去</div>
+  </div>
+</div>
+<script>
+  window.startAnimation = () => document.getElementById("stage").classList.add("playing");
+</script>
+</body>
+</html>

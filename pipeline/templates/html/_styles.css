@@ -1,16 +1,23 @@
 /* Design tokens for all HTML asset templates.
  *
  * Single source of truth — adjust here, every template inherits.
- * Operator-confirmed (2026-05-20): 暖色系 + 沉稳节奏 + 现代感。
+ *
+ * Style direction (2026-05-20 updated): 暖色系 + 年轻化 + 现代感 + 一点趣味。
+ * 不要 editorial-magazine 的硬端正脸；像 Linear / Notion / Things 那种
+ * 柔但有锐度的产品视觉。圆角大、强调色饱和、动画微微有弹性、装饰元素
+ * 可以可爱（小几何块、SVG icon、按比例示意图）。
  *
  * Color palette:
- *   暖煤褐 (charcoal-umber) 底 + 奶油 (parchment cream) 字 + 珊瑚橙 (coral) /
- *   芥末金 (mustard gold) / 赤陶 (terracotta) 强调色。
- *   绝不使用冷蓝灰 (#0b1220 这种) 或纯黑/纯白。
+ *   暖煤褐底 + 奶油字 + 珊瑚橙 / 芥末金 / 赤陶 / 粉珊瑚 / 鼠尾草绿 五档强调。
+ *   绝不冷蓝灰、绝不纯黑、绝不纯白。
  *
  * Pacing:
- *   慢 + 留白。CSS 过渡 1.0-1.6s，stagger 1.0-1.2s，整段动画 5-7s 完成，
- *   再留 1-3s 静止给观众反应。绝不在 1s 内 burst 把所有内容一起 fade in。
+ *   慢 + 留白。CSS 过渡 1.0-1.6s，stagger 1.0-1.2s，整段动画 5-7s 完成。
+ *   缓动用 `var(--ease-snap)` 或 `var(--ease-bounce)`，不要光秃秃的 `ease`。
+ *
+ * Subtitle safe zone:
+ *   视频底部 ~140-180px 被 burn_zh 字幕占用。`.stage` 默认 padding-bottom
+ *   被加大到 180px，html 主体内容不要压到那里。
  */
 
 @font-face {
@@ -25,30 +32,34 @@
 }
 
 :root {
-  /* Backgrounds — warm dark gradient stops */
-  --bg-deep: #14100c;        /* deepest, for radial centers */
-  --bg-base: #1c1714;        /* canonical canvas */
-  --bg-elev: #2a2118;        /* one step lighter (cards/highlights) */
-  --bg-soft: #3a2c1f;        /* warm umber glow accent */
+  /* Backgrounds — warm dark, slightly lighter than v1 (less mortuary) */
+  --bg-deep: #1a1410;        /* deepest, for radial centers */
+  --bg-base: #221a15;        /* canonical canvas — was #1c1714 */
+  --bg-elev: #312419;        /* one step lighter — was #2a2118 */
+  --bg-soft: #4a3624;        /* warm cocoa highlight */
 
   /* Foreground text */
-  --text-strong: #fef9ec;    /* near-white, biggest numbers / strongest emphasis */
-  --text-default: #faf3e0;   /* parchment cream — default body */
-  --text-soft: #d4c4a5;      /* secondary line / sub-text */
+  --text-strong: #fef9ec;    /* near-white, biggest numbers */
+  --text-default: #faf3e0;   /* parchment cream */
+  --text-soft: #d4c4a5;      /* secondary line */
   --text-muted: #b39e84;     /* labels, kickers, meta */
   --text-faint: #8a7a64;     /* footnotes */
-  --text-dim: #6b5a45;       /* nearly invisible separators */
+  --text-dim: #6b5a45;       /* dim separators */
 
-  /* Brand accents — use these for chart bars, highlights, callouts */
-  --accent-primary: #ff8a4c;   /* coral — main accent, numbers / dots / kicker */
-  --accent-secondary: #ffd166; /* mustard gold — secondary series */
-  --accent-tertiary: #e76f51;  /* terracotta — tertiary series */
+  /* Brand accents (5 colors — pick by data row index when comparing series).
+     v1 had 3 stiff colors; v2 adds pink-coral + sage for variety. */
+  --accent-primary:   #ff8a4c;   /* 珊瑚橙 — default/strongest */
+  --accent-secondary: #ffd166;   /* 芥末金 */
+  --accent-tertiary:  #e76f51;   /* 赤陶 */
+  --accent-pink:      #ff6b9d;   /* 粉珊瑚 — playful accent */
+  --accent-sage:      #88c099;   /* 鼠尾草绿 — gentle positive series */
 
   /* Borders + cards */
-  --border-soft: rgba(250, 243, 224, 0.08);
-  --border-med:  rgba(250, 243, 224, 0.18);
-  --card-bg:     rgba(250, 243, 224, 0.04);
-  --accent-tint: rgba(255, 138, 76, 0.15);
+  --border-soft: rgba(250, 243, 224, 0.10);
+  --border-med:  rgba(250, 243, 224, 0.22);
+  --card-bg:     rgba(250, 243, 224, 0.05);
+  --card-bg-warm:rgba(255, 138, 76, 0.06);   /* subtle warm card tint */
+  --accent-tint: rgba(255, 138, 76, 0.18);
 
   /* Typography */
   --font-stack: 'Noto Sans SC', sans-serif;
@@ -59,30 +70,44 @@
   --letter-kicker: 4px;
   --letter-tight: -1px;
 
-  /* Pacing (use in transitions) */
-  --t-fast: 900ms;    /* lighter overlays / arrows */
-  --t-mid:  1100ms;   /* most fade-ins */
-  --t-slow: 1300ms;   /* titles, big reveals */
-  --t-draw: 3200ms;   /* axis line / chart line draw — operator wants visible motion */
+  /* Pacing — use the eased curves, not bare `ease` */
+  --t-fast: 900ms;
+  --t-mid:  1100ms;
+  --t-slow: 1300ms;
+  --t-draw: 3200ms;
+  --stagger: 1100ms;
 
-  --stagger: 1100ms;  /* default delay between sequential bullets / events */
+  /* Eased curves */
+  --ease-snap:   cubic-bezier(.2, 1.0, .3, 1);     /* default — strong settle */
+  --ease-bounce: cubic-bezier(.34, 1.56, .64, 1);  /* slight overshoot, fun */
+  --ease-draw:   cubic-bezier(.2, .8, .2, 1);      /* line / axis drawing */
 
-  /* Layout */
-  --pad-edge: 56px 80px;
+  /* Shape language — larger radii than v1 (was 14px) */
+  --radius-card: 20px;
+  --radius-pill: 999px;
+  --radius-chip: 10px;
+
+  /* Layout — bottom padding reserved for字幕 */
+  --pad-top: 56px;
+  --pad-x: 80px;
+  --pad-bottom: 180px;    /* subtitle safe zone — DO NOT reduce */
 }
 
-/* Canonical canvas — every template extends from this. */
+/* Canonical canvas */
 html, body {
   margin: 0; padding: 0;
   width: 1280px; height: 720px;
-  background: linear-gradient(135deg, var(--bg-base) 0%, var(--bg-elev) 60%, var(--bg-base) 100%);
+  background:
+    radial-gradient(ellipse 800px 600px at 25% 15%, rgba(255, 138, 76, 0.08), transparent 70%),
+    radial-gradient(ellipse 700px 500px at 80% 85%, rgba(255, 107, 157, 0.04), transparent 70%),
+    linear-gradient(135deg, var(--bg-base) 0%, var(--bg-elev) 60%, var(--bg-base) 100%);
   color: var(--text-default);
   font-family: var(--font-stack);
   overflow: hidden;
 }
 
 .stage {
-  padding: var(--pad-edge);
+  padding: var(--pad-top) var(--pad-x) var(--pad-bottom);
   height: 100%; box-sizing: border-box;
   display: flex; flex-direction: column;
 }

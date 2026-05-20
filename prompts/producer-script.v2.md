@@ -79,12 +79,16 @@ notes: |
   - **单 clip**（narration 围绕单一主体 / 事件）：填 `archival_source` / `archival_video_id` / `archival_start_sec` / `archival_dur_sec` / `archival_excerpt`。**dur_sec 要匹配 narration 估算时长**——中文字数 ÷ 4 + 1s 余量（30 字 narration → dur 8-10s）。**单 clip cap 15s**。dur 太短会循环重播看着不自然；太长会被截断不浪费。
   - **多 clip 拼接**（narration 横跨多个主体 / 事件 / 公司）：填 `archival_clips: [{{source, video_id, start_sec, dur_sec, excerpt}}, ...]`，2-4 段，每段 1.5-6s，总和接近 narration 时长。**典型场景**：narration 是 "1X 主攻家庭场景，Agility 切仓储，宇树从机器狗起家" → 3 段分别覆盖 1X / Agility / 宇树，比用 Agility 一段画面盖 3 个主角自然得多。**多 clip 优先于单 clip**——但凡 narration 提了 ≥2 个不同主体，就该拼。
 
-**用 archival 的工作流**（重要）：
+**用 archival 的工作流**（**强制**，不允许跳步）：
 
-1. **search**：先查**本地缓存** `search_archival_cache(keywords)`——之前下载过的源可以零成本复用（同一支 source.mp4 反复剪不同片段是常态）。**缓存命中且主体 / 场景对得上**就跳到 step 3 直接 localize；命中不上再外搜：`search_bilibili_archival(中文 query)` 优先 + `search_youtube_archival(英文 query)` 兜底。看返回 metadata：`is_official: true` 的官方源（★）**首选**，但**不是唯一选项**——搬运 / 解说 / 配图视频如果包含主体真实镜头（人物本人画面 / 现场镜头 / 官方素材片段），也算可用 archival 源。reaction / compilation / 标题党 跳过。
+1. **search 必须做 ≥2 次**：先 `search_archival_cache(keywords)` 查本地缓存——**缓存命中且主体 / 场景对得上**才能跳到 step 3 直接 localize。**缓存 miss 或不匹配时，必须**调 `search_bilibili_archival(中文 query)` **和** `search_youtube_archival(英文 query)` **各至少一次**。不允许「缓存没有 → 直接降级到 image / ai」，那是错误流程。换 query 角度再搜一次（题材直接 → 题材侧面 → 题材类比场景）。两边各搜≥1次返回 0 候选才允许降级。看返回 metadata：`is_official: true` 的官方源（★）**首选**，但**不是唯一选项**——搬运 / 解说 / 配图视频如果包含主体真实镜头（人物本人画面 / 现场镜头 / 官方素材片段），也算可用 archival 源。reaction / compilation / 标题党 跳过。
 2. **verify**：可选用 `read_*_transcript(id)` 拉字幕预览，确认这就是想要的源（标题不一定准）。
 3. **localize**：`localize_in_video(video_id, source, target_desc, target_dur_sec)` 拿到具体时间戳。`target_desc` 写**具体视觉动作 / 场景**（「Jensen 在台上举起 Blackwell 主板，双手向观众展示」），不要写抽象主题。`target_dur_sec` 默认 6-7s。返回 `{{start_sec, end_sec, confidence, method, excerpt}}`，记下来填到 shot 的 archival_* 字段。
 4. **emit shot** 时把上面收集的字段填齐。**archival_excerpt 要填**——这是给操作员人工审核用的，标记「这段我从哪个源剪了什么」。
+
+**反例**：
+- ❌ 「这条 narration 讲 2003 年桑塔纳 / 捷达，缓存没有 → 直接走 ai 生成」——错。应该 `search_bilibili_archival("桑塔纳 捷达 90 年代")` + `search_youtube_archival("Volkswagen Santana China street 1990s")` 各一次。B 站怀旧汽车类素材一抓一大把。
+- ❌ 「讲城市路况，agent 直接 pexels」——错。先 `search_bilibili_archival("中国城市路况 早高峰")` 几乎必然有命中。
 
 **archival 的 ROI**（**关键升级**）：
 
@@ -97,19 +101,35 @@ notes: |
 - pexels 只用于完全通用 B-roll（城市街景 / 打字 / 通用工厂）
 
 ROI 判断模板（按顺序问）：
-- 画面要展示**任何真实人物 / 公司 / 事件**？（哪怕只是配画面用）
-  → 要 → **`archival`**（强约束，loose connection 也用）
+- 画面要展示**任何真实人物 / 公司 / 事件 / 真实场景**？（哪怕只是配画面用）
+  → 要 → **`archival`**（强约束，loose connection 也用；缓存 miss **必须**外搜 ≥2 次）
   → 不要 → 进入下一题
-- 这条 narration 有**数据 / 比较 / 时间结构 / 列表 / 流程 / 金句 / 单个炸场数字**？
-  → 是 → **`html`**（看下文规则）
-  → 否 → 进入下一题
-- 画面是**完全抽象 / 不存在 / 纯隐喻**？(数学公式 / 文档特写 / 招牌)
+- 这条 narration **真的需要**结构化视觉表达？必须满足**至少一个**：
+  - ≥3 个并列项（≥3 个论点 / 国家 / 公司 / 步骤 / 事件）
+  - ≥2 个需要**视觉对比**的具体数值（不是单句里随便提到一个数字，而是数值对比是这条 shot 的核心信息）
+  - 明确的时间序列（≥3 个时间点）
+  - 单个炸场数字 + 1-2 句上下文（数字本身值得占一整屏）
+  - 一段值得画出来的示意图（空间比例 / 流量流向 / 结构关系）
+  - 一句金句配人物 + 来源（quote-card 用法）
+
+  → 是 → **`html`**（看下文规则；**必须**充分发挥 html 的可视化能力，**不要只列数字**）
+  → 否（**单句陈述、没数据、没列表、纯论述** → 即使提了 1 个数字也不该用 html）→ 进入下一题
+- 画面是**完全抽象 / 不存在 / 纯隐喻**？(数学公式 / 文档特写 / 招牌 / 概念视觉化)
   → 是 → `image` (CogView)
   → 否 → 进入下一题
 - 画面**是中文具体场景且需要真实运动**？(人在走 / 车在开 / 工人在做事)
   → 是 → `ai`（Doubao 真视频）
   → 否 → 进入下一题
 - 通用场景 B-roll → `pexels`
+
+**html 反例**（这些**不**该用 html）：
+- ❌ 「说白了，这是典型的『标准滞后于产业』错配——汽车跑了三十年，停车规范几乎没动」——这是一句陈述，没数据、没列表、没需要 visual 的对比；走 image / archival / ai
+- ❌ 「于是出现一个简单的数学题」单独这一句——空话；除非紧跟着这一句真的画图（比如下条的车宽 vs 车位对比）
+
+**html 正例**：
+- ✅ "1X / Agility / 宇树 三家分别赌不同场景，估值差 5 倍" → bullet-ppt 或 comparison-3col
+- ✅ "车宽 1.95 米，车位 2.4 米，车门余量只有 40 厘米" → **画两个按比例矩形 + 标注余量 + 动画演示**（不是列数字，要画图）
+- ✅ "OpenAI / Anthropic / Google 五年市值演变" → multi-line-chart 或 timeline
 
 **archival 数量约束**：理想比例 ≥ **50% 的 shot** 走 archival（提升可信度 + 视觉感染力），上限 70%（避免变成纯剪辑视频 + 平台版权检测风险，留 30% 给概念性 image / html / 通用 pexels / 中文场景 ai 做衔接）。
 
@@ -144,6 +164,19 @@ shot.narration 含以下任一就**应该**用 html：
 2. **必须** expose `window.startAnimation = () => {{ ... }}` —— pipeline 控时序，你不能 autoplay
 3. **绝不**用冷蓝灰 hex（`#0b1220` / `#3b82f6` / `#ef4444` 这种），**绝不**硬编码颜色 —— 用 `var(--accent-primary)` / `var(--text-default)` 等 CSS 变量
 4. **绝不**爆款腔（"答案扎心"、"细思极恐"、"炸裂"、"硬核"等）
+5. **字幕安全区**：视频底部 180px 是字幕带，**html 主要内容不要压到底部**——`.stage` 已经在 `_styles.css` 里设了 `padding-bottom: 180px`，你只需要让主体内容自然居中或上半屏即可，不要 override
+
+### 充分利用 HTML 的可视化能力（**操作员强调**）
+
+html 不是"动画 PPT"。能画示意图就**画示意图**，不要只是把数字列出来。常见做法：
+
+- **按比例几何**：narration 提"车宽 1.95 米 / 车位 2.4 米 / 余量 40 cm"——画两个按比例的矩形（1.95/2.4 = 81%）+ 标注余量 + 动画放大开门弧线。**比文字列表说服力高一档**
+- **流向 / 关系图**：用 SVG 画箭头连接 A → B → C，标注每一段的"信息含义"
+- **空间演示**：用 absolute positioning + transform 演示物体相对位置 / 大小变化
+- **数据 + 图形**：数字配 SVG 柱 / 线 / 圆，不是孤立数字
+- **图标化**：用 emoji 或简单 SVG 表达概念（🚗 / 🅿️ / 📈 等）
+
+判断 trick：你写完 html 后看一遍——**如果这条 html 拿掉只剩纯文字，narration 信息没丢，那这条 html 写得不够好**。html 要传递文字传不了的信息（比例、空间、相对关系、节奏）。
 
 ### 设计 token（必须用这些 CSS 变量）
 
