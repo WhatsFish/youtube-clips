@@ -281,7 +281,14 @@ def _parse_source_flag(spec: str, role: str) -> SourceSpec:
     return SourceSpec(video_id=vid.strip(), title=title.strip(), channel=channel.strip(), role=role)
 
 
-def _sources_from_discovery(path: Path) -> list[SourceSpec]:
+def _sources_from_discovery(path: Path) -> tuple[list[SourceSpec], int | None]:
+    """Load discovery JSON. Returns (sources, topic_id).
+
+    `topic_id` is the operator-approved topic that discover-source.py wrote
+    into the discovery JSON. When present, EDL stage 2 reuses it instead of
+    upserting a new topic on the agent-rewritten title_zh (which would
+    otherwise create a duplicate topic row and orphan the approved one).
+    """
     data = json.loads(path.read_text(encoding="utf-8"))
     picked = data.get("picked_sources") or []
     if not picked:
@@ -294,7 +301,8 @@ def _sources_from_discovery(path: Path) -> list[SourceSpec]:
             channel=p.get("channel") or "(unknown)",
             role=p.get("role") or ("primary" if i == 0 else "supplement"),
         ))
-    return out
+    topic_id = data.get("topic_id")
+    return out, (int(topic_id) if topic_id is not None else None)
 
 
 # ---- Driver ---------------------------------------------------------------
@@ -336,8 +344,9 @@ def main() -> int:
     run_id = args.run_id
 
     # Resolve sources: discovery JSON > --source flags > legacy positional.
+    approved_topic_id: int | None = None
     if args.from_discovery:
-        sources = _sources_from_discovery(args.from_discovery)
+        sources, approved_topic_id = _sources_from_discovery(args.from_discovery)
     elif args.source:
         sources = [
             _parse_source_flag(s, role="primary" if i == 0 else "supplement")
@@ -615,14 +624,39 @@ def main() -> int:
         source_db_ids.append(sid)
 
     topic_title = edl.get("title_zh") or primary.title or primary.video_id
-    topic_id = db.upsert_topic(
-        profile_id=profile.id,
-        title=topic_title,
-        description=edl.get("description_zh"),
-        keywords=edl.get("tags_zh"),
-        status="approved",
-        source="agent",
-    )
+    if approved_topic_id is not None:
+        # Operator already approved this topic upstream — reuse the row so
+        # EDL's rewritten title_zh doesn't create a duplicate. We do refresh
+        # the title / description / keywords on the existing row so the
+        # editor's polished phrasing surfaces in /topics + publish materials.
+        topic_id = approved_topic_id
+        with db.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE topics
+                   SET title       = COALESCE(%s, title),
+                       description = COALESCE(%s, description),
+                       keywords    = COALESCE(%s::text[], keywords),
+                       updated_at  = NOW()
+                 WHERE id = %s
+                """,
+                (
+                    topic_title,
+                    edl.get("description_zh"),
+                    edl.get("tags_zh"),
+                    topic_id,
+                ),
+            )
+        print(f"db: reusing approved topic_id={topic_id} (title refreshed)")
+    else:
+        topic_id = db.upsert_topic(
+            profile_id=profile.id,
+            title=topic_title,
+            description=edl.get("description_zh"),
+            keywords=edl.get("tags_zh"),
+            status="approved",
+            source="agent",
+        )
     # Stamp ids into the EDL *before* persisting so jobs.edl_jsonb carries
     # them. `source_id` (singular) stays as the primary's id for backward
     # compat with web/src/lib/jobs.ts's existing single-source join. The
