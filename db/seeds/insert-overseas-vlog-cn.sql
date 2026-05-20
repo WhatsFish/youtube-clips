@@ -56,6 +56,12 @@ VALUES (
         "重磅"
       ],
       "must_include_disclaimer": false,
+      "outro": {
+        "text_line1_zh": "陪你看更多海外日常",
+        "text_line2_zh": "点赞关注，常来逛逛",
+        "background_prompt_en": "abstract cinematic background, soft warm cozy tones — golden hour amber fading to muted teal, gentle and homey atmosphere like sunset through a window, very minimalist, no text no faces no objects",
+        "duration_sec": 3
+      },
       "topic_discovery": {
         "youtube_queries": [
           "USA suburb day in the life apartment tour",

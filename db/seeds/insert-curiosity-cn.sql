@@ -56,6 +56,12 @@ VALUES (
         "学习了"
       ],
       "must_include_disclaimer": false,
+      "outro": {
+        "text_line1_zh": "想看更多冷门人文故事",
+        "text_line2_zh": "点赞关注，每天更新",
+        "background_prompt_en": "abstract cinematic background, mysterious deep midnight purple and amber gradient with subtle warm light, hints of intrigue and curiosity, very dark and elegant, no text no faces no objects, premium documentary aesthetic",
+        "duration_sec": 3
+      },
       "topic_discovery": {
         "youtube_queries": [
           "weird but true facts you never knew",

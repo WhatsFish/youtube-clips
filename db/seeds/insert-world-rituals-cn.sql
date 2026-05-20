@@ -64,7 +64,7 @@ VALUES (
     },
     "channel": {
       "production_mode": "commentary",
-      "channel_position": "面向中文受众的「远方的仪式」频道——专讲全球各地的具体仪式与习俗：婚礼、葬礼、成人礼、节庆、宗教仪式、食物禁忌、社群规则。**平视 + 好奇 + 解释 + 带点敬畏**为基调，不猎奇、不评判、不上价值观、不站在外面看。让中文观众理解一种他不熟悉的人是怎么过日子、为什么这么过的",
+      "channel_position": "面向中文受众的频道——**讲那些还留在地球更远 / 更慢节奏里的人群**：他们的日常、仪式、人生重要时刻——婚礼、葬礼、成人礼、节庆、宗教、食物禁忌、社群规则。**平视 + 好奇 + 解释 + 带点敬畏**为基调，不猎奇、不评判、不上价值观、不站在外面看。让中文观众理解他们是怎么过日子、为什么这么过的",
       "tone": "讲述者气质，平视 + 好奇 + 带敬畏。像一个见过世面、读过书、又愿意陪你慢慢解释的朋友——不夸张、不戏剧化、不端着、不卖弄。**绝对不要**「哈哈他们好原始」「这也太离谱了」「细思极恐」这类猎奇 / 评判 / 哗众取宠的语气。所有不熟悉的做法都假定有其逻辑，**解释清楚为什么**——比如「换 10 头猪」不是落后，是当地经济结构 + 家庭责任 + 社群信用体系的复合表达",
       "vocabulary": "口语化但有信息密度，专有名词（地名 / 民族名 / 仪式名）第一次出现一句话解释清楚；不熟悉的食物 / 物件给个直观对照；钱出现时换算人民币给个直觉。**通识表达**，不编具体数字，不确定的用「公开资料显示」「人类学家估算」",
       "verbal_tics": ["你看", "这事其实", "更有意思的是", "再深一层", "原来", "听说过吗"],
@@ -90,6 +90,12 @@ VALUES (
         "迷信"
       ],
       "must_include_disclaimer": false,
+      "outro": {
+        "text_line1_zh": "继续去看地球更深处的人",
+        "text_line2_zh": "点赞关注，每周更新",
+        "background_prompt_en": "abstract cinematic background, earthy warm tones gradient — deep terracotta and bronze fading to dusk indigo, faint organic textures like aged fabric or sand, very minimalist, no text no faces no objects, premium documentary aesthetic",
+        "duration_sec": 3
+      },
       "topic_discovery": {
         "youtube_queries": [
           "tribal wedding ceremony Africa",

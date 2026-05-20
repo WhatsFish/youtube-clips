@@ -76,6 +76,12 @@ VALUES (
       "style_exemplars": {
         "ref_bvids": ["BV1fgoVBGE2M", "BV1kLdsByEhq", "BV12T4y1F7LT"]
       },
+      "outro": {
+        "text_line1_zh": "跟着镜头去看更多地球角落",
+        "text_line2_zh": "点赞关注，下条见",
+        "background_prompt_en": "abstract cinematic background, sky blue gradient transitioning to sunset gold on the horizon, with a hint of vast open atmosphere, traveling spirit, very minimalist, no text no faces no objects",
+        "duration_sec": 3
+      },
       "topic_discovery": {
         "youtube_queries": [
           "Vietnam daily life street food vlog",
