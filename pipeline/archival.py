@@ -544,6 +544,9 @@ def _backfill_meta_json(
     if source == "youtube" and COOKIES.exists():
         cmd.extend(["--cookies", str(COOKIES)])
     elif source == "bilibili":
+        bili_cookies = Path.home() / ".config" / "youtube-clips-bili-cookies.txt"
+        if bili_cookies.exists():
+            cmd.extend(["--cookies", str(bili_cookies)])
         cmd.extend([
             "--user-agent",
             "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
