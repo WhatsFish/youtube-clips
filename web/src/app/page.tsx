@@ -75,6 +75,12 @@ export default async function Home() {
             </p>
           </div>
           <div className="flex items-baseline gap-4 text-xs">
+            <Link
+              href="/assets"
+              className="text-neutral-500 hover:underline uppercase tracking-wider"
+            >
+              archival 池
+            </Link>
             {pendingTopics > 0 && (
               <Link
                 href="/topics"

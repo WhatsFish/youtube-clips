@@ -9,6 +9,8 @@ services:
       PG_PORT: "5432"
       PG_USER: youtube_clips
       PG_DB: youtube_clips
+    volumes:
+      - /video/youtube-clips/archival-sources:/video/youtube-clips/archival-sources:ro
     ports:
       - "127.0.0.1:3008:3000"
 
