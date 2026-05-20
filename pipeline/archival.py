@@ -470,8 +470,26 @@ def ensure_downloaded(video_id: str, source: str) -> Path:
         "--merge-output-format", "mp4",
         url,
     ]
-    if COOKIES.exists():
-        cmd.extend(["--cookies", str(COOKIES)])
+    if source == "youtube":
+        # YouTube cookies live in our existing yt-dlp cookies file (Phase 2
+        # commentary downloads use the same). Pass them when present.
+        if COOKIES.exists():
+            cmd.extend(["--cookies", str(COOKIES)])
+    elif source == "bilibili":
+        # B 站 rejects requests with off-domain cookies (HTTP 412 Precondition
+        # Failed) and just needs a real-browser UA + Referer header. Public
+        # videos are downloadable without login. If a B 站-specific cookies
+        # file ever lands at ~/.config/youtube-clips-bili-cookies.txt we'd
+        # pick it up here for premium / login-required content.
+        bili_cookies = Path.home() / ".config" / "youtube-clips-bili-cookies.txt"
+        if bili_cookies.exists():
+            cmd.extend(["--cookies", str(bili_cookies)])
+        cmd.extend([
+            "--user-agent",
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "--add-header", "Referer:https://www.bilibili.com/",
+        ])
     subprocess.run(cmd, check=True)
     if not out.exists():
         # yt-dlp sometimes lands at .mp4-prefixed temp; locate by glob
