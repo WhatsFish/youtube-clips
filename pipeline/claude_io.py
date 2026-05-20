@@ -38,6 +38,7 @@ DEFAULT_MCP_TOOLS = [
     "mcp__ytclips__read_youtube_transcript",
     "mcp__ytclips__read_bilibili_transcript",
     "mcp__ytclips__localize_in_video",
+    "mcp__ytclips__search_archival_cache",
 ]
 # `list_recent_videos` removed from defaults 2026-05-14 per operator —
 # cross-episode callbacks caused factual drift (referenced publish-tier

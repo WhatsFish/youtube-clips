@@ -675,6 +675,7 @@ def _acquire_one_archival(
     i: int,
     assets_dir: Path,
     run_id: int | None = None,
+    profile_name: str | None = None,
 ) -> dict:
     """Extract archival footage for one shot.
 
@@ -698,11 +699,11 @@ def _acquire_one_archival(
     # Detect multi-clip vs single-clip mode
     clips_input = sh.get("archival_clips") or []
     if clips_input:
-        return _acquire_archival_multi(sh, i, assets_dir, clips_input, ensure_downloaded)
-    return _acquire_archival_single(sh, i, assets_dir, ensure_downloaded)
+        return _acquire_archival_multi(sh, i, assets_dir, clips_input, ensure_downloaded, profile_name=profile_name)
+    return _acquire_archival_single(sh, i, assets_dir, ensure_downloaded, profile_name=profile_name)
 
 
-def _acquire_archival_single(sh: dict, i: int, assets_dir: Path, ensure_downloaded) -> dict:
+def _acquire_archival_single(sh: dict, i: int, assets_dir: Path, ensure_downloaded, *, profile_name: str | None = None) -> dict:
     arch_source = (sh.get("archival_source") or "").strip()
     arch_vid = (sh.get("archival_video_id") or "").strip()
     arch_start = sh.get("archival_start_sec")
@@ -728,7 +729,7 @@ def _acquire_archival_single(sh: dict, i: int, assets_dir: Path, ensure_download
         f"{arch_start:.1f}s for {arch_dur:.1f}s — checking cache..."
     )
     t0 = time.monotonic()
-    src_mp4 = ensure_downloaded(arch_vid, arch_source)
+    src_mp4 = ensure_downloaded(arch_vid, arch_source, profile_name=profile_name)
     print(f"  s{i:02d} source ready in {time.monotonic()-t0:.0f}s: {src_mp4}")
 
     target = assets_dir / f"clip-{i:02d}-archival-{arch_source}-{arch_vid}.mp4"
@@ -760,6 +761,7 @@ def _acquire_archival_single(sh: dict, i: int, assets_dir: Path, ensure_download
 def _acquire_archival_multi(
     sh: dict, i: int, assets_dir: Path,
     clips_input: list[dict], ensure_downloaded,
+    *, profile_name: str | None = None,
 ) -> dict:
     """Multi-clip path: cut each segment, ffmpeg concat into one mp4."""
     if len(clips_input) < 2:
@@ -799,7 +801,7 @@ def _acquire_archival_multi(
             f"  — {(c.get('excerpt') or '')[:55]}"
         )
         t0 = time.monotonic()
-        src_mp4 = ensure_downloaded(c_vid, c_source)
+        src_mp4 = ensure_downloaded(c_vid, c_source, profile_name=profile_name)
         part = assets_dir / f"clip-{i:02d}-archival-part{j}-{c_source}-{c_vid}.mp4"
         _ffmpeg_cut_archival(src_mp4, c_start, c_dur, part)
         print(f"    [{j}] cut ready in {time.monotonic()-t0:.0f}s")
@@ -853,6 +855,7 @@ def _acquire_assets(
     cogview: CogViewClient | None = None,
     global_strategy: str = "hybrid",
     run_id: int | None = None,
+    profile_name: str | None = None,
 ) -> list[dict]:
     """Route each shot to Pexels or AI generation based on the agent's
     per-shot `asset_strategy` (and the global override).
@@ -895,7 +898,7 @@ def _acquire_assets(
 
         if chosen == "archival":
             try:
-                src = _acquire_one_archival(sh, i, assets_dir, run_id=run_id)
+                src = _acquire_one_archival(sh, i, assets_dir, run_id=run_id, profile_name=profile_name)
                 events.emit(run_id, "acquire", "done",
                             f"s{i:02d} {src.get('video_id')}",
                             shot_idx=i, video_id=src.get("video_id"))
@@ -1231,6 +1234,7 @@ def _run_phase_render(*, job_id: int, asset_strategy: str = "hybrid") -> int:
         cogview=cogview,
         global_strategy=asset_strategy,
         run_id=run_id,
+        profile_name=profile.name,
     )
     events.emit(run_id, "assets", "done", f"{len(sources)} sources ready")
 

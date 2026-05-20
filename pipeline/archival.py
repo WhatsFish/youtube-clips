@@ -8,11 +8,13 @@ produce-original.py).
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from difflib import SequenceMatcher
 from pathlib import Path
 
@@ -447,12 +449,15 @@ target_desc：
 # ---------------------------------------------------------------------------
 
 
-def ensure_downloaded(video_id: str, source: str) -> Path:
+def ensure_downloaded(video_id: str, source: str, *, profile_name: str | None = None) -> Path:
     """Download the source video (if not already cached) and return path.
 
     Cached under /video/youtube-clips/archival-sources/<source>/<id>/source.mp4.
     480p saves bandwidth/disk — quality is fine for sampling + final clip
     at 1280x720 bilibili / 720x1280 douyin targets.
+
+    On first download, also writes meta.json with title/channel/duration so
+    later runs can search the archival pool via search_archival_cache.
     """
     if source not in ("bilibili", "youtube"):
         raise ValueError(f"unknown source {source!r}")
@@ -460,6 +465,9 @@ def ensure_downloaded(video_id: str, source: str) -> Path:
     cache_dir.mkdir(parents=True, exist_ok=True)
     out = cache_dir / "source.mp4"
     if out.exists() and out.stat().st_size > 1_000_000:
+        meta_path = cache_dir / "meta.json"
+        if not meta_path.exists():
+            _backfill_meta_json(cache_dir, video_id, source, profile_name=profile_name)
         return out
 
     url = _url_for(video_id, source)
@@ -468,19 +476,13 @@ def ensure_downloaded(video_id: str, source: str) -> Path:
         "-f", "bestvideo[height<=720]+bestaudio/best[height<=720]",
         "-o", str(out),
         "--merge-output-format", "mp4",
+        "--write-info-json",
         url,
     ]
     if source == "youtube":
-        # YouTube cookies live in our existing yt-dlp cookies file (Phase 2
-        # commentary downloads use the same). Pass them when present.
         if COOKIES.exists():
             cmd.extend(["--cookies", str(COOKIES)])
     elif source == "bilibili":
-        # B 站 rejects requests with off-domain cookies (HTTP 412 Precondition
-        # Failed) and just needs a real-browser UA + Referer header. Public
-        # videos are downloadable without login. If a B 站-specific cookies
-        # file ever lands at ~/.config/youtube-clips-bili-cookies.txt we'd
-        # pick it up here for premium / login-required content.
         bili_cookies = Path.home() / ".config" / "youtube-clips-bili-cookies.txt"
         if bili_cookies.exists():
             cmd.extend(["--cookies", str(bili_cookies)])
@@ -492,11 +494,81 @@ def ensure_downloaded(video_id: str, source: str) -> Path:
         ])
     subprocess.run(cmd, check=True)
     if not out.exists():
-        # yt-dlp sometimes lands at .mp4-prefixed temp; locate by glob
         candidates = sorted(cache_dir.glob("source*.mp4"))
         if candidates:
             candidates[0].rename(out)
+    _write_meta_from_info_json(cache_dir, video_id, source, profile_name=profile_name)
     return out
+
+
+def _write_meta_from_info_json(
+    cache_dir: Path, video_id: str, source: str, *, profile_name: str | None
+) -> None:
+    """After yt-dlp --write-info-json, distill the verbose info.json into
+    a slim meta.json we control, then delete the info.json."""
+    info_candidates = sorted(cache_dir.glob("*.info.json"))
+    info: dict = {}
+    if info_candidates:
+        try:
+            info = json.loads(info_candidates[0].read_text())
+        except Exception:
+            info = {}
+    meta = {
+        "video_id": video_id,
+        "source": source,
+        "url": _url_for(video_id, source),
+        "title": info.get("title") or info.get("fulltitle"),
+        "channel": info.get("channel") or info.get("uploader") or info.get("uploader_id"),
+        "duration_sec": info.get("duration"),
+        "upload_date": info.get("upload_date"),
+        "fetched_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "profile_name": profile_name,
+    }
+    (cache_dir / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2))
+    for p in info_candidates:
+        try:
+            p.unlink()
+        except OSError:
+            pass
+
+
+def _backfill_meta_json(
+    cache_dir: Path, video_id: str, source: str, *, profile_name: str | None
+) -> None:
+    """Best-effort metadata for already-cached entries that predate
+    meta.json. Calls yt-dlp --skip-download --dump-json; if that fails
+    (video deleted, network), writes a minimal stub so later searches at
+    least see the video_id exists."""
+    url = _url_for(video_id, source)
+    cmd = [str(YTDLP), "--skip-download", "--dump-json", url]
+    if source == "youtube" and COOKIES.exists():
+        cmd.extend(["--cookies", str(COOKIES)])
+    elif source == "bilibili":
+        cmd.extend([
+            "--user-agent",
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "--add-header", "Referer:https://www.bilibili.com/",
+        ])
+    info: dict = {}
+    try:
+        proc = subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=60)
+        info = json.loads(proc.stdout.splitlines()[0]) if proc.stdout.strip() else {}
+    except Exception:
+        info = {}
+    meta = {
+        "video_id": video_id,
+        "source": source,
+        "url": url,
+        "title": info.get("title") or info.get("fulltitle"),
+        "channel": info.get("channel") or info.get("uploader") or info.get("uploader_id"),
+        "duration_sec": info.get("duration"),
+        "upload_date": info.get("upload_date"),
+        "fetched_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "profile_name": profile_name,
+        "backfilled": True,
+    }
+    (cache_dir / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2))
 
 
 def _url_for(video_id: str, source: str) -> str:

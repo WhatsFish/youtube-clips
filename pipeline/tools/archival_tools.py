@@ -17,14 +17,19 @@ two-pass review wins.
 """
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import tempfile
+from difflib import SequenceMatcher
 from pathlib import Path
 
 from ..bilibili import BilibiliClient, extract_bvid
 from ..transcript import parse_vtt
 from ..youtube_search import search as yt_search_raw
+
+
+ARCHIVAL_CACHE_BASE = Path("/video/youtube-clips/archival-sources")
 
 
 # Whitelisted official channels — when one of these owns a candidate, we
@@ -317,6 +322,109 @@ def read_youtube_transcript(video_id: str, language: str = "en") -> dict:
                 {"start": s, "end": s, "text": t} for s, t in entries
             ],
         }
+
+
+def search_archival_cache(
+    keywords: str,
+    source: str = "",
+    min_duration_sec: int = 0,
+    max_duration_sec: int = 0,
+    max_results: int = 20,
+) -> dict:
+    """Search videos already downloaded and cached on disk.
+
+    Prefer this BEFORE `search_youtube_archival` / `search_bilibili_archival`:
+    if we already have a source on disk that fits the shot, it costs nothing
+    to reuse (no download, no rate-limit risk, transcript may already be
+    cached too).
+
+    Args:
+        keywords: free-form query string; fuzzy-matched against title +
+            channel of each cached entry. Empty string returns everything
+            sorted by recency.
+        source: "" (any) / "youtube" / "bilibili".
+        min_duration_sec / max_duration_sec: 0 disables. Use these to
+            filter for clip-sized vs long-source material.
+        max_results: cap on returned candidates (default 20).
+
+    Returns:
+        dict with `keywords` echoed and `results` list of:
+            {video_id, source, url, title, channel, duration_sec,
+             upload_date, fetched_at, profile_name, match_score}
+        sorted by match_score desc (recency-tie-broken).
+
+    Notes:
+        * Entries with `backfilled: true` and `title: null` are still
+          returned when keywords is empty (so the agent can see them), but
+          will not match keyword queries.
+        * Stale local files are not pruned here — the disk audit job is
+          separate.
+    """
+    if source and source not in ("youtube", "bilibili"):
+        return {"keywords": keywords, "error": f"unknown source {source!r}", "results": []}
+
+    out: list[dict] = []
+    bases = ([ARCHIVAL_CACHE_BASE / source] if source
+             else [ARCHIVAL_CACHE_BASE / s for s in ("youtube", "bilibili")])
+    kw_lower = (keywords or "").strip().lower()
+
+    for base in bases:
+        if not base.exists():
+            continue
+        for vid_dir in base.iterdir():
+            if not vid_dir.is_dir():
+                continue
+            meta_path = vid_dir / "meta.json"
+            mp4_path = vid_dir / "source.mp4"
+            if not mp4_path.exists():
+                continue
+            if not meta_path.exists():
+                continue
+            try:
+                meta = json.loads(meta_path.read_text())
+            except Exception:
+                continue
+
+            dur = meta.get("duration_sec") or 0
+            if min_duration_sec and dur and dur < min_duration_sec:
+                continue
+            if max_duration_sec and dur and dur > max_duration_sec:
+                continue
+
+            title = (meta.get("title") or "").strip()
+            channel = (meta.get("channel") or "").strip()
+            score = 0.0
+            if kw_lower:
+                hay = f"{title} {channel}".lower()
+                if not hay.strip():
+                    continue
+                if kw_lower in hay:
+                    score = 1.0
+                else:
+                    score = SequenceMatcher(None, kw_lower, hay).ratio()
+                    for tok in kw_lower.split():
+                        if len(tok) >= 3 and tok in hay:
+                            score = max(score, 0.6)
+                if score < 0.35:
+                    continue
+            else:
+                score = 0.5
+
+            out.append({
+                "video_id": meta.get("video_id"),
+                "source": meta.get("source"),
+                "url": meta.get("url"),
+                "title": meta.get("title"),
+                "channel": meta.get("channel"),
+                "duration_sec": dur,
+                "upload_date": meta.get("upload_date"),
+                "fetched_at": meta.get("fetched_at"),
+                "profile_name": meta.get("profile_name"),
+                "match_score": round(score, 3),
+            })
+
+    out.sort(key=lambda x: (x["match_score"], x.get("fetched_at") or ""), reverse=True)
+    return {"keywords": keywords, "results": out[:max_results]}
 
 
 # Internal helpers ---------------------------------------------------------

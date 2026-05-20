@@ -39,6 +39,7 @@ from pipeline.tools.archival_tools import (
     read_youtube_transcript,
     read_bilibili_transcript,
     localize_in_video,
+    search_archival_cache,
 )
 
 
@@ -74,6 +75,7 @@ mcp.tool()(search_bilibili_archival)
 mcp.tool()(read_youtube_transcript)
 mcp.tool()(read_bilibili_transcript)
 mcp.tool()(localize_in_video)
+mcp.tool()(search_archival_cache)
 
 
 def main() -> None:

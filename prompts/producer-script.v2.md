@@ -38,7 +38,8 @@ notes: |
 - **`fetch_rss_feed(feed_id)`** —— RSS 源最新条目（`zhihu_hot` / `thepaper_featured` / `36kr_latest`）。
 - **`preview_pexels(query, max_results)`** —— **写 visual_brief_en 前先 verify**：Pexels 真有没有这个画面？没有就直接 emit `asset_strategy="ai"`，不要瞎写 Pexels 让 render 时翻车。
 - **`search_person_image(name)`** —— 搜真实人物照片（DDG 图片）。**仅在你确定要 emit `asset_strategy="person"` 时调来验证有没有合适图**，不是写脚本时随便用。
-- **`search_youtube_archival(query)`** / **`search_bilibili_archival(query)`** —— **找真实存档视频**（搬运 / 官方源 / 演讲录像）。返回 metadata 含 `is_official`（★ 标注，官方账号）。用于「画面必须是真实历史镜头」的场景：Jensen 在 GTC 举起 Blackwell、Sam Altman 国会作证、DeepSeek 发布会等。**B 站优先**（NVIDIA英伟达 / Apple / 央视 等官方账号在 B 站有完整中文译制版，YouTube 没有），YouTube 兜底（英文原始报道）。
+- **`search_archival_cache(keywords, source="", min_duration_sec=0, max_duration_sec=0)`** —— **优先查这条**：在已经下载过的素材池里找命中。`keywords` 用中英文皆可，按 title + channel fuzzy 匹配。命中了就可以直接 `localize_in_video` + emit archival，**省掉一次下载**。
+- **`search_youtube_archival(query)`** / **`search_bilibili_archival(query)`** —— **缓存里没有再外搜**。返回 metadata 含 `is_official`（★ 标注，官方账号）。用于「画面必须是真实历史镜头」的场景：Jensen 在 GTC 举起 Blackwell、Sam Altman 国会作证、DeepSeek 发布会等。**B 站优先**（NVIDIA英伟达 / Apple / 央视 等官方账号在 B 站有完整中文译制版，YouTube 没有），YouTube 兜底（英文原始报道）。
 - **`read_youtube_transcript(video_id)`** / **`read_bilibili_transcript(bvid)`** —— 拉一个候选源的 timestamped 字幕做内容预览，**搜到候选后用这条验证是不是想要的视频**。
 - **`localize_in_video(video_id, source, target_desc, target_dur_sec)`** —— **找到具体时间戳**。返回 `{{start_sec, end_sec, confidence, method, excerpt}}`。内部两层：字幕 fuzzy（cheap） + 帧 vision（贵但稳）。**只在确定要 emit `asset_strategy="archival"` 时调用**。`target_desc` 要细：「Jensen 在台上举起 Blackwell 主板」 > 「Blackwell 发布」。**视觉动作类**（举起 / 上台 / 展示）的 target 内部自动跳过字幕走 vision。
 - **`read_image(url)`** —— 看任何公开图（web_search 找到的配图、Pexels 缩略图）。决定 visual_brief 是否对得上现实形象时用。
@@ -75,11 +76,11 @@ notes: |
 - **`"person"`（具体真实人物的静态形象）**—— DDG 图片搜索拿真实公开照片 + ken-burns。**任何有名有姓的真实人物**（鲍威尔、沃什、马斯克、习近平、特朗普、某某 CEO/学者）的肖像 shot 走这一档。schema 多填 `person_name` 字段。
 - **`"archival"`（真实历史镜头 / 现场录像）** —— 从 YouTube / Bilibili 已有视频里**剪取真实片段**。用于「这个人物做了某件事 / 这个事件发生时的画面」——Jensen 在 GTC 上举起 Blackwell、Sam Altman 国会作证、DeepSeek 发布会、习特会握手等。**比 person 更强**：person 只是静态照片 + 假动画，archival 是**真实视频画面**，可信度 + 表现力都高一档。**两种填法**（按 shot narration 选）：
   - **单 clip**（narration 围绕单一主体 / 事件）：填 `archival_source` / `archival_video_id` / `archival_start_sec` / `archival_dur_sec` / `archival_excerpt`。**dur_sec 要匹配 narration 估算时长**——中文字数 ÷ 4 + 1s 余量（30 字 narration → dur 8-10s）。**单 clip cap 15s**。dur 太短会循环重播看着不自然；太长会被截断不浪费。
-  - **多 clip 拼接**（narration 横跨多个主体 / 事件 / 公司）：填 `archival_clips: [{source, video_id, start_sec, dur_sec, excerpt}, ...]`，2-4 段，每段 1.5-6s，总和接近 narration 时长。**典型场景**：narration 是 "1X 主攻家庭场景，Agility 切仓储，宇树从机器狗起家" → 3 段分别覆盖 1X / Agility / 宇树，比用 Agility 一段画面盖 3 个主角自然得多。**多 clip 优先于单 clip**——但凡 narration 提了 ≥2 个不同主体，就该拼。
+  - **多 clip 拼接**（narration 横跨多个主体 / 事件 / 公司）：填 `archival_clips: [{{source, video_id, start_sec, dur_sec, excerpt}}, ...]`，2-4 段，每段 1.5-6s，总和接近 narration 时长。**典型场景**：narration 是 "1X 主攻家庭场景，Agility 切仓储，宇树从机器狗起家" → 3 段分别覆盖 1X / Agility / 宇树，比用 Agility 一段画面盖 3 个主角自然得多。**多 clip 优先于单 clip**——但凡 narration 提了 ≥2 个不同主体，就该拼。
 
 **用 archival 的工作流**（重要）：
 
-1. **search**：`search_bilibili_archival(中文 query)` 优先 + `search_youtube_archival(英文 query)` 兜底。看返回 metadata：`is_official: true` 的官方源（★）**首选**，但**不是唯一选项**——搬运 / 解说 / 配图视频如果包含主体真实镜头（人物本人画面 / 现场镜头 / 官方素材片段），也算可用 archival 源。reaction / compilation / 标题党 跳过。
+1. **search**：先查**本地缓存** `search_archival_cache(keywords)`——之前下载过的源可以零成本复用（同一支 source.mp4 反复剪不同片段是常态）。**缓存命中且主体 / 场景对得上**就跳到 step 3 直接 localize；命中不上再外搜：`search_bilibili_archival(中文 query)` 优先 + `search_youtube_archival(英文 query)` 兜底。看返回 metadata：`is_official: true` 的官方源（★）**首选**，但**不是唯一选项**——搬运 / 解说 / 配图视频如果包含主体真实镜头（人物本人画面 / 现场镜头 / 官方素材片段），也算可用 archival 源。reaction / compilation / 标题党 跳过。
 2. **verify**：可选用 `read_*_transcript(id)` 拉字幕预览，确认这就是想要的源（标题不一定准）。
 3. **localize**：`localize_in_video(video_id, source, target_desc, target_dur_sec)` 拿到具体时间戳。`target_desc` 写**具体视觉动作 / 场景**（「Jensen 在台上举起 Blackwell 主板，双手向观众展示」），不要写抽象主题。`target_dur_sec` 默认 6-7s。返回 `{{start_sec, end_sec, confidence, method, excerpt}}`，记下来填到 shot 的 archival_* 字段。
 4. **emit shot** 时把上面收集的字段填齐。**archival_excerpt 要填**——这是给操作员人工审核用的，标记「这段我从哪个源剪了什么」。
@@ -182,7 +183,7 @@ JSON schema:
       "archival_start_sec": "（archival 单 clip 模式）整数 / 浮点秒",
       "archival_dur_sec": "（archival 单 clip 模式）匹配 narration 估算时长（中文字数÷4+1s），cap 15s",
       "archival_excerpt": "（archival 单 clip 模式）人类可读内容描述，操作员审核用",
-      "archival_clips": "（archival 多 clip 拼接模式，narration 跨多主体时用）[{source, video_id, start_sec, dur_sec, excerpt}, ...] 2-4 段，每段 1.5-6s，与单 clip 字段二选一",
+      "archival_clips": "（archival 多 clip 拼接模式，narration 跨多主体时用）[{{source, video_id, start_sec, dur_sec, excerpt}}, ...] 2-4 段，每段 1.5-6s，与单 clip 字段二选一",
       "outline_ref": "对应 OUTLINE.outline 索引（0-based）",
       "purpose": "选这段画面的原因"
     }}
