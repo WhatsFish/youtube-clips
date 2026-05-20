@@ -1,0 +1,72 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="_styles.css">
+<style>
+  /* Single huge stat — number ticks up, label + context follow. */
+  html, body {
+    background: radial-gradient(ellipse at center, var(--bg-soft) 0%, var(--bg-base) 60%, var(--bg-deep) 100%);
+  }
+  .stage {
+    padding: 60px 80px; align-items: center; justify-content: center; text-align: center;
+  }
+  .kicker {
+    margin-bottom: 14px; opacity: 0; transition: opacity var(--t-mid) ease;
+  }
+  .figure {
+    font-size: 220px; font-weight: 700; letter-spacing: -6px;
+    line-height: 1; color: var(--accent-primary);
+    font-variant-numeric: tabular-nums; margin-bottom: 8px;
+    opacity: 0; transform: scale(0.92);
+    transition: opacity var(--t-slow) ease, transform var(--t-slow) ease;
+  }
+  .label {
+    font-size: 36px; font-weight: 700; color: var(--text-strong);
+    margin-bottom: 28px;
+    opacity: 0; transform: translateY(10px);
+    transition: opacity var(--t-slow) ease, transform var(--t-slow) ease;
+  }
+  .context {
+    font-size: 22px; color: var(--text-muted); line-height: 1.6;
+    max-width: 900px;
+    opacity: 0; transform: translateY(15px);
+    transition: opacity var(--t-slow) ease, transform var(--t-slow) ease;
+  }
+
+  .playing .kicker { opacity: 1; }
+  .playing .figure { opacity: 1; transform: scale(1); transition-delay: 500ms; }
+  .playing .label { opacity: 1; transform: translateY(0); transition-delay: 3500ms; }
+  .playing .context { opacity: 1; transform: translateY(0); transition-delay: 4600ms; }
+</style>
+</head>
+<body>
+<div class="stage" id="stage">
+  <div class="kicker">英伟达 2025 年 Q3 数据</div>
+  <div class="figure" data-target="3500" data-prefix="$" data-suffix="亿">$0亿</div>
+  <div class="label">单季营收</div>
+  <div class="context">同比增长 94%，<span style="color: var(--accent-primary); font-weight: 700;">90% 来自数据中心 GPU</span><br>相当于整个 AMD 全年营收的 1.4 倍</div>
+</div>
+<script>
+  function easeOutCubic(t) { return 1 - Math.pow(1 - t, 3); }
+  window.startAnimation = function() {
+    document.getElementById("stage").classList.add("playing");
+    const fig = document.querySelector(".figure");
+    const target = parseInt(fig.dataset.target, 10);
+    const prefix = fig.dataset.prefix || "";
+    const suffix = fig.dataset.suffix || "";
+    const DELAY = 500;
+    const DUR = 3000;
+    const start = performance.now() + DELAY;
+    function step(now) {
+      if (now < start) { requestAnimationFrame(step); return; }
+      const t = Math.min(1, (now - start) / DUR);
+      const k = easeOutCubic(t);
+      fig.textContent = prefix + Math.round(target * k).toLocaleString() + suffix;
+      if (t < 1) requestAnimationFrame(step);
+    }
+    requestAnimationFrame(step);
+  };
+</script>
+</body>
+</html>

@@ -8,3 +8,4 @@ __pycache__/
 # Runtime artifacts — DB and /video/youtube-clips/ are the source of truth.
 input/
 output/
+/experiments/

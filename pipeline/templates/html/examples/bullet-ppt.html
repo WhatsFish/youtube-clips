@@ -1,0 +1,57 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="_styles.css">
+<style>
+  /* Multi-stage bullet PPT — kicker + title + N bullets revealed one at a time. */
+  .stage { padding: 56px 80px; }
+  .kicker { opacity: 0; transition: opacity var(--t-mid) ease; margin-bottom: 6px; }
+  .title { margin-bottom: 32px;
+           opacity: 0; transform: translateY(20px);
+           transition: opacity var(--t-slow) ease, transform var(--t-slow) ease; }
+  .bullets { display: flex; flex-direction: column; flex: 1; }
+  .bullet {
+    display: flex; gap: 22px; padding: 14px 0;
+    border-bottom: 1px solid var(--border-soft);
+    opacity: 0; transform: translateY(16px);
+    transition: opacity var(--t-slow) ease, transform var(--t-slow) ease;
+  }
+  .bullet:first-child { border-top: 1px solid var(--border-soft); }
+  .num { width: 44px; font-size: 28px; color: var(--accent-primary); font-weight: 700; }
+  .bullet-content { display: flex; flex-direction: column; flex: 1; }
+  .b-title { font-size: 28px; font-weight: 700; margin-bottom: 4px; }
+  .b-body { font-size: var(--fs-body); color: var(--text-muted); }
+
+  .playing .kicker { opacity: 1; }
+  .playing .title { opacity: 1; transform: translateY(0); transition-delay: 500ms; }
+  .playing .bullet:nth-child(1) { opacity: 1; transform: translateY(0); transition-delay: 1500ms; }
+  .playing .bullet:nth-child(2) { opacity: 1; transform: translateY(0); transition-delay: 2700ms; }
+  .playing .bullet:nth-child(3) { opacity: 1; transform: translateY(0); transition-delay: 3900ms; }
+  .playing .bullet:nth-child(4) { opacity: 1; transform: translateY(0); transition-delay: 5100ms; }
+  .playing .bullet:nth-child(5) { opacity: 1; transform: translateY(0); transition-delay: 6300ms; }
+</style>
+</head>
+<body>
+<div class="stage" id="stage">
+  <div class="kicker">H200 对华禁运 · 五个层面</div>
+  <div class="title">为什么这次不是技术问题</div>
+
+  <div class="bullets">
+    <div class="bullet"><div class="num">01</div>
+      <div class="bullet-content"><div class="b-title">出口许可不是技术</div><div class="b-body">美国商务部一支笔决定的事</div></div></div>
+    <div class="bullet"><div class="num">02</div>
+      <div class="bullet-content"><div class="b-title">时间窗压缩到月</div><div class="b-body">训练周期与许可周期高度耦合</div></div></div>
+    <div class="bullet"><div class="num">03</div>
+      <div class="bullet-content"><div class="b-title">替代方案缺一截</div><div class="b-body">国产 AI 芯片性能差 30-50%</div></div></div>
+    <div class="bullet"><div class="num">04</div>
+      <div class="bullet-content"><div class="b-title">下游已签订单</div><div class="b-body">字节、阿里、百度都排好了订单</div></div></div>
+    <div class="bullet"><div class="num">05</div>
+      <div class="bullet-content"><div class="b-title">信号大于实物</div><div class="b-body">本质是对华政策的姿态表达</div></div></div>
+  </div>
+</div>
+<script>
+  window.startAnimation = function() { document.getElementById("stage").classList.add("playing"); };
+</script>
+</body>
+</html>

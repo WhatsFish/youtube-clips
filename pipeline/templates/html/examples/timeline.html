@@ -1,0 +1,68 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="_styles.css">
+<style>
+  /* Horizontal timeline with sequentially-revealed events on a drawn axis. */
+  .title { margin-bottom: 70px; }
+  .timeline { position: relative; flex: 1; padding: 0 40px; }
+  .axis {
+    position: absolute; left: 0; right: 0; top: 50%;
+    height: 2px; background: var(--border-soft);
+    transform-origin: left center; transform: scaleX(0);
+    transition: transform var(--t-draw) cubic-bezier(.2,.8,.2,1);
+  }
+  .event {
+    position: absolute; top: 0; bottom: 0;
+    display: flex; flex-direction: column; align-items: center;
+    width: 200px; margin-left: -100px;
+    opacity: 0; transform: translateY(-12px);
+    transition: opacity var(--t-mid) ease, transform var(--t-mid) ease;
+  }
+  .event-year {
+    font-size: 22px; color: var(--text-muted); font-weight: 700;
+    height: calc(50% - 30px); display: flex; align-items: flex-end;
+    padding-bottom: 14px;
+  }
+  .dot {
+    width: 16px; height: 16px; border-radius: 50%;
+    background: var(--accent-primary);
+    box-shadow: 0 0 0 4px rgba(255, 138, 76, 0.18);
+  }
+  .event-body {
+    height: calc(50% - 30px); padding-top: 14px;
+    display: flex; flex-direction: column; align-items: center;
+  }
+  .event-name { font-size: 24px; font-weight: 700; text-align: center; margin-bottom: 4px; }
+  .event-meta { font-size: var(--fs-meta); color: var(--text-muted); text-align: center; }
+
+  .playing .axis { transform: scaleX(1); }
+  .playing .event-1 { opacity: 1; transform: translateY(0); transition-delay: 600ms; }
+  .playing .event-2 { opacity: 1; transform: translateY(0); transition-delay: 1650ms; }
+  .playing .event-3 { opacity: 1; transform: translateY(0); transition-delay: 2700ms; }
+  .playing .event-4 { opacity: 1; transform: translateY(0); transition-delay: 3750ms; }
+  .playing .event-5 { opacity: 1; transform: translateY(0); transition-delay: 4800ms; }
+  .playing .event-6 { opacity: 1; transform: translateY(0); transition-delay: 5850ms; }
+</style>
+</head>
+<body>
+<div class="stage" id="stage">
+  <div class="kicker">大模型 · 出场年表</div>
+  <div class="title">五年时间，参数膨胀了两个量级</div>
+
+  <div class="timeline">
+    <div class="axis"></div>
+    <div class="event event-1" style="left: 5%"><div class="event-year">2020</div><div class="dot"></div><div class="event-body"><div class="event-name">GPT-3</div><div class="event-meta">175B 参数</div></div></div>
+    <div class="event event-2" style="left: 22%"><div class="event-year">2022.11</div><div class="dot"></div><div class="event-body"><div class="event-name">ChatGPT</div><div class="event-meta">面向公众</div></div></div>
+    <div class="event event-3" style="left: 39%"><div class="event-year">2023.3</div><div class="dot"></div><div class="event-body"><div class="event-name">GPT-4</div><div class="event-meta">多模态</div></div></div>
+    <div class="event event-4" style="left: 56%"><div class="event-year">2024.3</div><div class="dot"></div><div class="event-body"><div class="event-name">Claude 3</div><div class="event-meta">长 context</div></div></div>
+    <div class="event event-5" style="left: 73%"><div class="event-year">2025</div><div class="dot"></div><div class="event-body"><div class="event-name">o1 / o3</div><div class="event-meta">推理时计算</div></div></div>
+    <div class="event event-6" style="left: 92%"><div class="event-year">2026</div><div class="dot"></div><div class="event-body"><div class="event-name">GPT-5</div><div class="event-meta">? T 参数</div></div></div>
+  </div>
+</div>
+<script>
+  window.startAnimation = function() { document.getElementById("stage").classList.add("playing"); };
+</script>
+</body>
+</html>

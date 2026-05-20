@@ -1,0 +1,63 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="_styles.css">
+<style>
+  /* Animated bar chart — 3 columns, bars grow to target heights then values fade in. */
+  .stage { padding: 60px 80px; }
+  .title { margin-bottom: 60px; }
+  .chart {
+    display: flex; align-items: flex-end; justify-content: space-around;
+    height: 380px; gap: 60px; padding: 0 40px;
+  }
+  .bar-col { display: flex; flex-direction: column; align-items: center; flex: 1; height: 100%; justify-content: flex-end; }
+  .bar-value {
+    font-size: 36px; font-weight: 700; margin-bottom: 14px;
+    opacity: 0; transform: translateY(20px);
+    transition: opacity var(--t-mid) ease 2400ms, transform var(--t-mid) ease 2400ms;
+  }
+  .bar {
+    width: 100%; height: 0; border-radius: 6px 6px 0 0;
+    transition: height 1800ms cubic-bezier(.2,.8,.2,1);
+  }
+  .bar-label { font-size: 22px; color: var(--text-soft); margin-top: 18px; text-align: center; }
+  .bar-sub { font-size: var(--fs-meta); color: var(--text-muted); margin-top: 4px; text-align: center; }
+  .playing .bar-1 { height: 70%; background: var(--accent-secondary); }
+  .playing .bar-2 { height: 50%; background: var(--accent-primary); }
+  .playing .bar-3 { height: 95%; background: var(--accent-tertiary); }
+  .playing .bar-value { opacity: 1; transform: translateY(0); }
+  .footnote { margin-top: 32px; font-size: var(--fs-meta); color: var(--text-faint); text-align: right; }
+</style>
+</head>
+<body>
+<div class="stage" id="stage">
+  <div class="kicker">2024 全球人形机器人 · 估值对比</div>
+  <div class="title">谁拿到了最大的支票本</div>
+  <div class="chart">
+    <div class="bar-col">
+      <div class="bar-value">26 亿</div>
+      <div class="bar bar-1"></div>
+      <div class="bar-label">1X Technologies</div>
+      <div class="bar-sub">挪威 · OpenAI 投资</div>
+    </div>
+    <div class="bar-col">
+      <div class="bar-value">17 亿</div>
+      <div class="bar bar-2"></div>
+      <div class="bar-label">Agility Robotics</div>
+      <div class="bar-sub">美国 · 量产中</div>
+    </div>
+    <div class="bar-col">
+      <div class="bar-value">80 亿</div>
+      <div class="bar bar-3"></div>
+      <div class="bar-label">宇树科技</div>
+      <div class="bar-sub">中国 · 拟上市估值</div>
+    </div>
+  </div>
+  <div class="footnote">数据来源：公开融资 / 估值披露（人民币换算）</div>
+</div>
+<script>
+  window.startAnimation = function() { document.getElementById("stage").classList.add("playing"); };
+</script>
+</body>
+</html>

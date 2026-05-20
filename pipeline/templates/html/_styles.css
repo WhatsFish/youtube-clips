@@ -1,0 +1,97 @@
+/* Design tokens for all HTML asset templates.
+ *
+ * Single source of truth — adjust here, every template inherits.
+ * Operator-confirmed (2026-05-20): 暖色系 + 沉稳节奏 + 现代感。
+ *
+ * Color palette:
+ *   暖煤褐 (charcoal-umber) 底 + 奶油 (parchment cream) 字 + 珊瑚橙 (coral) /
+ *   芥末金 (mustard gold) / 赤陶 (terracotta) 强调色。
+ *   绝不使用冷蓝灰 (#0b1220 这种) 或纯黑/纯白。
+ *
+ * Pacing:
+ *   慢 + 留白。CSS 过渡 1.0-1.6s，stagger 1.0-1.2s，整段动画 5-7s 完成，
+ *   再留 1-3s 静止给观众反应。绝不在 1s 内 burst 把所有内容一起 fade in。
+ */
+
+@font-face {
+  font-family: 'Noto Sans SC';
+  src: url('NotoSansSC-Regular.otf') format('opentype');
+  font-weight: 400;
+}
+@font-face {
+  font-family: 'Noto Sans SC';
+  src: url('NotoSansSC-Bold.otf') format('opentype');
+  font-weight: 700;
+}
+
+:root {
+  /* Backgrounds — warm dark gradient stops */
+  --bg-deep: #14100c;        /* deepest, for radial centers */
+  --bg-base: #1c1714;        /* canonical canvas */
+  --bg-elev: #2a2118;        /* one step lighter (cards/highlights) */
+  --bg-soft: #3a2c1f;        /* warm umber glow accent */
+
+  /* Foreground text */
+  --text-strong: #fef9ec;    /* near-white, biggest numbers / strongest emphasis */
+  --text-default: #faf3e0;   /* parchment cream — default body */
+  --text-soft: #d4c4a5;      /* secondary line / sub-text */
+  --text-muted: #b39e84;     /* labels, kickers, meta */
+  --text-faint: #8a7a64;     /* footnotes */
+  --text-dim: #6b5a45;       /* nearly invisible separators */
+
+  /* Brand accents — use these for chart bars, highlights, callouts */
+  --accent-primary: #ff8a4c;   /* coral — main accent, numbers / dots / kicker */
+  --accent-secondary: #ffd166; /* mustard gold — secondary series */
+  --accent-tertiary: #e76f51;  /* terracotta — tertiary series */
+
+  /* Borders + cards */
+  --border-soft: rgba(250, 243, 224, 0.08);
+  --border-med:  rgba(250, 243, 224, 0.18);
+  --card-bg:     rgba(250, 243, 224, 0.04);
+  --accent-tint: rgba(255, 138, 76, 0.15);
+
+  /* Typography */
+  --font-stack: 'Noto Sans SC', sans-serif;
+  --fs-kicker: 22px;
+  --fs-title:  50px;
+  --fs-body:   19px;
+  --fs-meta:   16px;
+  --letter-kicker: 4px;
+  --letter-tight: -1px;
+
+  /* Pacing (use in transitions) */
+  --t-fast: 900ms;    /* lighter overlays / arrows */
+  --t-mid:  1100ms;   /* most fade-ins */
+  --t-slow: 1300ms;   /* titles, big reveals */
+  --t-draw: 3200ms;   /* axis line / chart line draw — operator wants visible motion */
+
+  --stagger: 1100ms;  /* default delay between sequential bullets / events */
+
+  /* Layout */
+  --pad-edge: 56px 80px;
+}
+
+/* Canonical canvas — every template extends from this. */
+html, body {
+  margin: 0; padding: 0;
+  width: 1280px; height: 720px;
+  background: linear-gradient(135deg, var(--bg-base) 0%, var(--bg-elev) 60%, var(--bg-base) 100%);
+  color: var(--text-default);
+  font-family: var(--font-stack);
+  overflow: hidden;
+}
+
+.stage {
+  padding: var(--pad-edge);
+  height: 100%; box-sizing: border-box;
+  display: flex; flex-direction: column;
+}
+.kicker {
+  font-size: var(--fs-kicker); color: var(--text-muted);
+  letter-spacing: var(--letter-kicker); text-transform: uppercase;
+  margin-bottom: 6px;
+}
+.title {
+  font-size: var(--fs-title); font-weight: 700;
+  letter-spacing: var(--letter-tight);
+}

@@ -622,6 +622,51 @@ def _acquire_one_person(
     }
 
 
+def _acquire_one_html(sh: dict, i: int, assets_dir: Path, run_id: int | None = None) -> dict:
+    """Render agent-authored HTML → mp4 for one shot.
+
+    Schema:
+      shot.html — full HTML document, must <link rel="stylesheet" href="_styles.css">
+                  and expose window.startAnimation(). DESIGN.md spells out rules.
+      shot.html_dur_sec — optional clip duration (default: narration-derived).
+
+    The pipeline copies _styles.css + fonts next to the agent's HTML before
+    rendering so file:// resolves correctly.
+    """
+    from pipeline.html_render import render_html_clip
+
+    html_doc = sh.get("html") or ""
+    if not html_doc or not isinstance(html_doc, str):
+        raise ValueError(f"shot {i}: asset_strategy=html but shot.html missing/empty")
+
+    # Match clip duration to narration TTS (≈4 Chinese chars / second + 1s
+    # headroom), unless agent gave explicit html_dur_sec.
+    dur = sh.get("html_dur_sec")
+    if dur is None:
+        narration = (sh.get("narration") or "").strip()
+        n_chars = sum(1 for c in narration if not c.isspace())
+        dur = max(4.0, min(15.0, n_chars / 4.0 + 1.5))
+    dur = max(2.0, min(20.0, float(dur)))
+
+    target = assets_dir / f"clip-{i:02d}-html.mp4"
+    print(f"  s{i:02d} html render → {target.name} ({dur:.1f}s)")
+    t0 = time.monotonic()
+    render_html_clip(html_doc, target, duration_sec=dur)
+    print(f"  s{i:02d} html ready in {time.monotonic()-t0:.0f}s: {target}")
+
+    actual_dur = _ffprobe_seconds(target)
+    return {
+        "video_id": f"html-shot-{i:02d}",
+        "title": (sh.get("html_excerpt") or sh.get("visual_brief_en") or f"html shot {i}")[:120],
+        "channel": "html (self-generated)",
+        "role": "primary" if i == 0 else "supplement",
+        "path": str(target),
+        "duration_sec": actual_dur,
+        "page_url": None,
+        "asset_strategy": "html",
+    }
+
+
 def _ffmpeg_cut_archival(src_mp4: Path, start: float, dur: float, target: Path) -> None:
     """Cut [start, start+dur] from a source video into target. Strips audio
     so renderer's narration mix is unaffected. H.264 re-encoded so multi-
@@ -937,6 +982,29 @@ def _acquire_assets(
                     f"falling back to pexels", flush=True,
                 )
                 src = _fallback_pexels(f"person failed: {e}")
+        elif chosen == "html":
+            try:
+                src = _acquire_one_html(sh, i, assets_dir, run_id=run_id)
+                events.emit(run_id, "acquire", "done",
+                            f"s{i:02d} {src.get('video_id')}",
+                            shot_idx=i, video_id=src.get("video_id"))
+            except Exception as e:
+                # HTML failure → fall back to image (CogView) since both serve
+                # the "no real footage, abstract concept" use case. Pexels is
+                # too generic for the slots where agent picked html.
+                print(
+                    f"  s{i:02d} html render failed ({type(e).__name__}: {e}); "
+                    f"falling back to image", flush=True,
+                )
+                events.emit(run_id, "acquire", "fail",
+                            f"s{i:02d} html failed: {e}", shot_idx=i)
+                if cogview is None:
+                    src = _fallback_pexels(f"html failed + cogview unavailable: {e}")
+                else:
+                    try:
+                        src = _acquire_one_image(sh, i, query, assets_dir, cogview, run_id=run_id)
+                    except Exception as e2:
+                        src = _fallback_pexels(f"html→image both failed: {e2}")
         elif chosen == "image":
             if cogview is None:
                 print(f"  s{i:02d} asked for image but ZHIPU_API_KEY missing — pexels fallback")
@@ -1065,6 +1133,12 @@ def _run_phase_script(*, profile, topic: str) -> dict:
             "archival_dur_sec": sh.get("archival_dur_sec"),
             "archival_excerpt": sh.get("archival_excerpt"),
             "archival_clips": sh.get("archival_clips"),
+            # html-strategy: agent-authored full HTML document. DESIGN.md
+            # forbids cold colors / fast pacing; renderer enforces protocol
+            # contracts (link to _styles.css + window.startAnimation()).
+            "html": sh.get("html"),
+            "html_dur_sec": sh.get("html_dur_sec"),
+            "html_excerpt": sh.get("html_excerpt"),
         })
     edl = {
         "decision": "make",

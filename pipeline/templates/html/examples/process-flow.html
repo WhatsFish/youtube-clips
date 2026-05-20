@@ -1,0 +1,88 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="_styles.css">
+<style>
+  /* Horizontal process flow — 3-5 step cards connected by drawn arrows. */
+  .title { margin-bottom: 70px; }
+  .flow {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; flex: 1; padding-bottom: 40px;
+  }
+  .step {
+    flex: 1; max-width: 230px;
+    background: var(--card-bg);
+    border: 1px solid var(--border-soft);
+    border-radius: 14px; padding: 24px 22px;
+    display: flex; flex-direction: column; align-items: center; text-align: center;
+    opacity: 0; transform: translateY(20px) scale(0.96);
+    transition: opacity var(--t-mid) ease, transform var(--t-mid) ease;
+  }
+  .step-num {
+    width: 40px; height: 40px; border-radius: 50%;
+    background: var(--accent-tint); color: var(--accent-primary);
+    font-size: 18px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+    margin-bottom: 16px;
+  }
+  .step-title { font-size: 24px; font-weight: 700; margin-bottom: 8px; }
+  .step-body { font-size: 17px; color: var(--text-muted); line-height: 1.45; }
+
+  .arrow {
+    width: 60px; height: 2px; background: var(--border-med);
+    position: relative; transform: scaleX(0); transform-origin: left center;
+    transition: transform var(--t-fast) ease;
+  }
+  .arrow::after {
+    content: ""; position: absolute; right: -1px; top: 50%;
+    width: 10px; height: 10px;
+    border-top: 2px solid rgba(250,243,224,0.4);
+    border-right: 2px solid rgba(250,243,224,0.4);
+    transform: translate(0, -50%) rotate(45deg);
+  }
+
+  .playing .step-1 { opacity: 1; transform: translateY(0) scale(1); transition-delay: 600ms; }
+  .playing .arrow-1 { transform: scaleX(1); transition-delay: 1500ms; }
+  .playing .step-2 { opacity: 1; transform: translateY(0) scale(1); transition-delay: 2100ms; }
+  .playing .arrow-2 { transform: scaleX(1); transition-delay: 3000ms; }
+  .playing .step-3 { opacity: 1; transform: translateY(0) scale(1); transition-delay: 3600ms; }
+  .playing .arrow-3 { transform: scaleX(1); transition-delay: 4500ms; }
+  .playing .step-4 { opacity: 1; transform: translateY(0) scale(1); transition-delay: 5100ms; }
+</style>
+</head>
+<body>
+<div class="stage" id="stage">
+  <div class="kicker">大模型训练流程 · 简化版</div>
+  <div class="title">一支顶尖模型是怎么炼出来的</div>
+  <div class="flow">
+    <div class="step step-1">
+      <div class="step-num">1</div>
+      <div class="step-title">数据采集</div>
+      <div class="step-body">爬取全网文本<br>+ 高质量授权语料</div>
+    </div>
+    <div class="arrow arrow-1"></div>
+    <div class="step step-2">
+      <div class="step-num">2</div>
+      <div class="step-title">预训练</div>
+      <div class="step-body">数千 GPU 跑数月<br>学语言统计规律</div>
+    </div>
+    <div class="arrow arrow-2"></div>
+    <div class="step step-3">
+      <div class="step-num">3</div>
+      <div class="step-title">微调对齐</div>
+      <div class="step-body">人类反馈强化学习<br>RLHF / DPO</div>
+    </div>
+    <div class="arrow arrow-3"></div>
+    <div class="step step-4">
+      <div class="step-num">4</div>
+      <div class="step-title">部署上线</div>
+      <div class="step-body">推理优化 + 安全护栏<br>对外提供 API</div>
+    </div>
+  </div>
+</div>
+<script>
+  window.startAnimation = function() { document.getElementById("stage").classList.add("playing"); };
+</script>
+</body>
+</html>

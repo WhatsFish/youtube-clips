@@ -1,0 +1,56 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="_styles.css">
+<style>
+  /* Quote card — large open-quote glyph + quoted text + attribution. */
+  html, body {
+    background: radial-gradient(ellipse at 30% 20%, var(--bg-soft) 0%, var(--bg-base) 65%, var(--bg-deep) 100%);
+  }
+  .stage { padding: 80px 120px; justify-content: center; }
+  .open-quote {
+    font-size: 200px; line-height: 1; color: var(--accent-primary);
+    opacity: 0; transform: translateY(-10px);
+    transition: opacity var(--t-mid) ease, transform var(--t-mid) ease;
+    margin-bottom: -40px; margin-left: -10px;
+    font-family: 'Times New Roman', serif;
+  }
+  .quote {
+    font-size: 44px; font-weight: 400; line-height: 1.45; letter-spacing: -0.5px;
+    color: var(--text-strong); margin-bottom: 36px; max-width: 1000px;
+    opacity: 0; transform: translateY(20px);
+    transition: opacity 1600ms ease, transform 1600ms ease;
+  }
+  .attribution {
+    display: flex; align-items: center; gap: 16px;
+    opacity: 0; transform: translateY(15px);
+    transition: opacity var(--t-slow) ease, transform var(--t-slow) ease;
+  }
+  .accent { width: 4px; height: 48px; background: var(--accent-primary); border-radius: 2px; }
+  .attr-text { display: flex; flex-direction: column; }
+  .attr-name { font-size: 24px; font-weight: 700; color: var(--text-strong); }
+  .attr-meta { font-size: 18px; color: var(--text-muted); margin-top: 2px; }
+
+  .playing .open-quote { opacity: 1; transform: translateY(0); }
+  .playing .quote { opacity: 1; transform: translateY(0); transition-delay: 700ms; }
+  .playing .attribution { opacity: 1; transform: translateY(0); transition-delay: 3000ms; }
+</style>
+</head>
+<body>
+<div class="stage" id="stage">
+  <div class="open-quote">"</div>
+  <div class="quote">如果你跟着 AI 安全的脚步走，你就不是在做 AI 研究——你是在做 PR。</div>
+  <div class="attribution">
+    <div class="accent"></div>
+    <div class="attr-text">
+      <div class="attr-name">Yann LeCun</div>
+      <div class="attr-meta">Meta 首席 AI 科学家 · 2024年8月 Threads 帖子</div>
+    </div>
+  </div>
+</div>
+<script>
+  window.startAnimation = function() { document.getElementById("stage").classList.add("playing"); };
+</script>
+</body>
+</html>

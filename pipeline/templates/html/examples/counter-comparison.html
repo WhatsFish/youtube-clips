@@ -1,0 +1,83 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="_styles.css">
+<style>
+  /* Two-sided counter — numbers tick up to target, with a VS chip between. */
+  .title { margin-bottom: 50px; }
+  .pair { display: flex; flex: 1; gap: 32px; align-items: stretch; position: relative; }
+  .side {
+    flex: 1; display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    background: var(--card-bg);
+    border: 1px solid var(--border-soft);
+    border-radius: 14px; padding: 36px 40px; position: relative;
+  }
+  .flag { font-size: 56px; margin-bottom: 12px; }
+  .country { font-size: 24px; color: var(--text-soft); letter-spacing: 1px; margin-bottom: 30px; }
+  .figure {
+    font-size: 130px; font-weight: 700; letter-spacing: -3px;
+    font-variant-numeric: tabular-nums; line-height: 1; margin-bottom: 12px;
+  }
+  .unit { font-size: 30px; color: var(--text-muted); margin-bottom: 30px; }
+  .note { font-size: 17px; color: var(--text-muted); text-align: center; line-height: 1.5; }
+
+  .side-us .figure { color: var(--accent-secondary); }
+  .side-cn .figure { color: var(--accent-primary); }
+
+  .vs {
+    position: absolute; left: 50%; top: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 28px; color: var(--text-dim); letter-spacing: 6px; font-weight: 700;
+    background: var(--bg-base); padding: 8px 18px; border-radius: 999px;
+    border: 1px solid var(--border-med); z-index: 5;
+    opacity: 0; transition: opacity var(--t-fast) ease 300ms;
+  }
+  .playing .vs { opacity: 1; }
+</style>
+</head>
+<body>
+<div class="stage" id="stage">
+  <div class="kicker">2025 AI 数据中心资本支出</div>
+  <div class="title">中美砸钱节奏</div>
+  <div class="pair">
+    <div class="side side-us">
+      <div class="flag">🇺🇸</div>
+      <div class="country">美国</div>
+      <div class="figure" data-target="3800" data-prefix="$">$0</div>
+      <div class="unit">亿美元</div>
+      <div class="note">微软 / Meta / Google / Amazon<br>四家合计 capex</div>
+    </div>
+    <div class="vs">VS</div>
+    <div class="side side-cn">
+      <div class="flag">🇨🇳</div>
+      <div class="country">中国</div>
+      <div class="figure" data-target="650" data-prefix="$">$0</div>
+      <div class="unit">亿美元</div>
+      <div class="note">阿里 / 字节 / 百度 / 腾讯<br>四家合计 capex</div>
+    </div>
+  </div>
+</div>
+<script>
+  function easeOutCubic(t) { return 1 - Math.pow(1 - t, 3); }
+  window.startAnimation = function() {
+    document.getElementById("stage").classList.add("playing");
+    const figs = document.querySelectorAll(".figure");
+    const DUR = 5000;
+    const start = performance.now();
+    function step(now) {
+      const t = Math.min(1, (now - start) / DUR);
+      const k = easeOutCubic(t);
+      figs.forEach((el) => {
+        const target = parseInt(el.dataset.target, 10);
+        const prefix = el.dataset.prefix || "";
+        el.textContent = prefix + Math.round(target * k).toLocaleString();
+      });
+      if (t < 1) requestAnimationFrame(step);
+    }
+    requestAnimationFrame(step);
+  };
+</script>
+</body>
+</html>

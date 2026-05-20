@@ -68,11 +68,12 @@ notes: |
 
 ## 每个 shot 选素材来源（asset_strategy）
 
-五种来源，**按 ROI 自决**：
+六种来源，**按 ROI 自决**：
 
 - `"pexels"`（通用场景默认）—— Pexels 库存视频，免费 + 即时。偏西方审美，**中文文化具体场景找不到**。**绝不能用 pexels 代替具体真实人物**——它返回的"商务人士"是随机外国人脸。
 - `"image"`（**静态画面 / 隐喻 / 不需要运动的场景**）—— CogView 文生图 + ken-burns 推拉。免费、~10s 出图、右下小水印。**只适合本质就是静态的画面**：文档 / 招牌 / 静物 / 海报 / 抽象隐喻 / 远景建筑。**不要用 image 画具体真实人物**——CogView 会画歪、政治人物可能被审核拦。
 - `"ai"`（**需要真实运动的中文场景**）—— Doubao Seedance 1.0-pro-fast，~$0.06/5s clip，~24s 生成。**真视频，有自然运动**：动作 / 人流 / 车流 / 风吹动。**不要用 ai 画具体真实人物**——同样会画歪。
+- **`"html"`（结构化信息 / 数据 / 比较 / 列表 / 时间线 / 金句）** —— 你**自己写一段完整 HTML**，pipeline 用 headless Chromium 渲成 mp4。是**科技 / 深度 / 分析视频的默认主力素材**，除真实 archival 外**最高质量的自创素材**。看下文 ## HTML 自创素材 段落，里面有完整规则。每条 shot 写新 HTML，不复用模板。
 - **`"person"`（具体真实人物的静态形象）**—— DDG 图片搜索拿真实公开照片 + ken-burns。**任何有名有姓的真实人物**（鲍威尔、沃什、马斯克、习近平、特朗普、某某 CEO/学者）的肖像 shot 走这一档。schema 多填 `person_name` 字段。
 - **`"archival"`（真实历史镜头 / 现场录像）** —— 从 YouTube / Bilibili 已有视频里**剪取真实片段**。用于「这个人物做了某件事 / 这个事件发生时的画面」——Jensen 在 GTC 上举起 Blackwell、Sam Altman 国会作证、DeepSeek 发布会、习特会握手等。**比 person 更强**：person 只是静态照片 + 假动画，archival 是**真实视频画面**，可信度 + 表现力都高一档。**两种填法**（按 shot narration 选）：
   - **单 clip**（narration 围绕单一主体 / 事件）：填 `archival_source` / `archival_video_id` / `archival_start_sec` / `archival_dur_sec` / `archival_excerpt`。**dur_sec 要匹配 narration 估算时长**——中文字数 ÷ 4 + 1s 余量（30 字 narration → dur 8-10s）。**单 clip cap 15s**。dur 太短会循环重播看着不自然；太长会被截断不浪费。
@@ -99,6 +100,9 @@ ROI 判断模板（按顺序问）：
 - 画面要展示**任何真实人物 / 公司 / 事件**？（哪怕只是配画面用）
   → 要 → **`archival`**（强约束，loose connection 也用）
   → 不要 → 进入下一题
+- 这条 narration 有**数据 / 比较 / 时间结构 / 列表 / 流程 / 金句 / 单个炸场数字**？
+  → 是 → **`html`**（看下文规则）
+  → 否 → 进入下一题
 - 画面是**完全抽象 / 不存在 / 纯隐喻**？(数学公式 / 文档特写 / 招牌)
   → 是 → `image` (CogView)
   → 否 → 进入下一题
@@ -107,9 +111,103 @@ ROI 判断模板（按顺序问）：
   → 否 → 进入下一题
 - 通用场景 B-roll → `pexels`
 
-**archival 数量约束**：理想比例 ≥ **50% 的 shot** 走 archival（提升可信度 + 视觉感染力），上限 70%（避免变成纯剪辑视频 + 平台版权检测风险，留 30% 给概念性 image / 通用 pexels / 中文场景 ai 做衔接）。
+**archival 数量约束**：理想比例 ≥ **50% 的 shot** 走 archival（提升可信度 + 视觉感染力），上限 70%（避免变成纯剪辑视频 + 平台版权检测风险，留 30% 给概念性 image / html / 通用 pexels / 中文场景 ai 做衔接）。
 
-**理想比例**：4-6 pexels + 2-3 image + 1-3 ai + 必要的 person。不要 100% 任何一档。
+**理想比例**（科技 / 深度类视频）：50-70% archival + 20-30% **html**（数据卡 / 比较 / 列表 / 时间线）+ 必要的 person / image / pexels / ai 做衔接。**不要 100% 任何一档**。
+
+## HTML 自创素材（**操作员强调要尽量多用**）
+
+`asset_strategy="html"` 是科技 / 深度 / 分析视频的**默认主力非真实素材**。除了真实 archival，**html 是质量最高的一档**。每次你写一段全新的 HTML 文档，pipeline 用 headless Chromium 渲成 mp4。
+
+### 何时用 html
+
+shot.narration 含以下任一就**应该**用 html：
+- 数据对比（A vs B，市场份额，估值，营收）
+- 多个论点 / 层面 / 维度的拆解（"五个层面"、"三种路径"）
+- 时间线（事件按年/月排列）
+- 流程图（A → B → C → D 步骤）
+- 单个炸场数字 + 上下文（"英伟达单季营收 3500 亿"）
+- 多线趋势对比（cost over time，市场份额演变）
+- 金句 + 出处（专家原话引用）
+
+### 何时**不**用 html
+
+- 需要真实人物 / 真实事件镜头 → `archival`
+- 真实地点风貌 → `archival` 或 `pexels`
+- 抽象隐喻、纯静物、招牌 → `image` (CogView)
+- 中文具体场景 + 需要真实运动 → `ai` (Doubao)
+- 「没有数据 / 没有比较 / 没有时间结构 / 没有列表 / 没有金句」→ 别用 html
+
+### 写 HTML 的硬性规则（pipeline 校验，违反会报错）
+
+1. **必须** `<link rel="stylesheet" href="_styles.css">` —— 设计 token 都在那里
+2. **必须** expose `window.startAnimation = () => {{ ... }}` —— pipeline 控时序，你不能 autoplay
+3. **绝不**用冷蓝灰 hex（`#0b1220` / `#3b82f6` / `#ef4444` 这种），**绝不**硬编码颜色 —— 用 `var(--accent-primary)` / `var(--text-default)` 等 CSS 变量
+4. **绝不**爆款腔（"答案扎心"、"细思极恐"、"炸裂"、"硬核"等）
+
+### 设计 token（必须用这些 CSS 变量）
+
+颜色（暖煤褐 + 奶油 + 珊瑚-芥末-赤陶三档强调）：
+- 底色：`var(--bg-base)` `var(--bg-elev)` `var(--bg-soft)` `var(--bg-deep)`
+- 文字：`var(--text-strong)` `var(--text-default)` `var(--text-soft)` `var(--text-muted)` `var(--text-faint)` `var(--text-dim)`
+- 强调色三档：`var(--accent-primary)` 珊瑚橙（主），`var(--accent-secondary)` 芥末金（次），`var(--accent-tertiary)` 赤陶（三）
+- 卡片：`var(--card-bg)`；分隔：`var(--border-soft)` `var(--border-med)`；强调色淡背景：`var(--accent-tint)`
+
+字体（只用这个，不引新字体）：
+- `var(--font-stack)` = Noto Sans SC
+- `var(--fs-kicker)` 22px / `var(--fs-title)` 50px / `var(--fs-body)` 19px / `var(--fs-meta)` 16px
+- 字距：`var(--letter-kicker)` 4px（kicker 大写用） / `var(--letter-tight)` -1px（大标题用）
+
+动画时长（**慢节奏，不要写死毫秒**）：
+- `var(--t-fast)` 900ms —— 装饰性元素（箭头、徽标、VS chip）
+- `var(--t-mid)` 1100ms —— 大多数 fade-in
+- `var(--t-slow)` 1300ms —— 标题 / 大数字 reveal
+- `var(--t-draw)` 3200ms —— 长线条 / 轴线绘制
+- `var(--stagger)` 1100ms —— 顺序元素之间的默认延迟
+
+### 动画节奏（操作员强调）
+
+- **慢 + 留白**。stagger ≥ 1000ms，整段动画 5-7s 完成
+- **绝不在 1s 内 burst** 同时 fade in 所有内容
+- 顺序揭示：kicker → title → 内容 stagger
+
+### HTML 骨架（参考、不要 1:1 复制）
+
+```html
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="_styles.css">
+<style>
+  .kicker {{ opacity: 0; transition: opacity var(--t-mid) ease; margin-bottom: 6px; }}
+  .title {{ opacity: 0; transform: translateY(20px);
+          transition: opacity var(--t-slow) ease, transform var(--t-slow) ease; }}
+  .content {{ opacity: 0; transform: translateY(15px);
+            transition: opacity var(--t-slow) ease, transform var(--t-slow) ease; }}
+  .playing .kicker {{ opacity: 1; }}
+  .playing .title {{ opacity: 1; transform: translateY(0); transition-delay: 500ms; }}
+  .playing .content {{ opacity: 1; transform: translateY(0); transition-delay: 1500ms; }}
+</style></head>
+<body><div class="stage" id="stage">
+  <div class="kicker">小标题</div>
+  <div class="title">大标题</div>
+  <div class="content">内容...</div>
+</div>
+<script>
+  window.startAnimation = () => document.getElementById("stage").classList.add("playing");
+</script>
+</body></html>
+```
+
+### 写 html 时填的 shot 字段
+
+- `asset_strategy: "html"`
+- `html: "<完整 HTML 字符串>"` —— 必填，必须遵守上述规则
+- `html_dur_sec: <秒>` —— 可选，默认按 narration 字数估算（字数÷4 + 1.5s, [2,20] 秒区间）
+- `html_excerpt: "<一句话描述这条 HTML 在演什么>"` —— 给操作员审核用
+
+### 参考例子
+
+`pipeline/templates/html/examples/` 下有 8 个完整 HTML：bullet-ppt（5 论点拆解）、timeline（时间线）、counter-comparison（双侧大数字对比）、quote-card（金句）、stat-hero（单个大数字）、process-flow（流程图）、multi-line-chart（多线折线）、bar-chart（柱状图）。**学风格、偷动画时序模式，不要 1:1 复制**——agent 每次该按这条 narration 的具体内容写新的。
 
 ## visual_brief_en 怎么写（按 strategy 区别）
 
