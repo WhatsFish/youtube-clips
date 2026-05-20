@@ -6,8 +6,14 @@ export type Shot = {
   source_idx?: number;  // present from EDL prompt v4 onward; defaults to 0 (primary)
   purpose?: string;
   visual_brief_en?: string;
-  asset_strategy?: string;       // producer-mode v2+: per-shot pexels|ai|image|person
+  asset_strategy?: string;       // producer-mode v2+: per-shot pexels|ai|image|person|archival
   person_name?: string;          // when asset_strategy=person
+  // when asset_strategy=archival (script_draft / pre-acquire fields):
+  archival_source?: string;      // "youtube" | "bilibili"
+  archival_video_id?: string;    // BVid or 11-char YouTube id
+  archival_start_sec?: number;
+  archival_dur_sec?: number;
+  archival_excerpt?: string;     // human-readable description of the clip content
   outline_ref?: string;
 };
 

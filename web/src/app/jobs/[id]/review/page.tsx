@@ -5,6 +5,16 @@ import ScriptReviewActions from "@/components/ScriptReviewActions";
 
 export const dynamic = "force-dynamic";
 
+function fmtSec(sec: number): string {
+  const s = Math.floor(sec);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  if (m < 60) return `${m}:${r.toString().padStart(2, "0")}`;
+  const h = Math.floor(m / 60);
+  return `${h}:${(m % 60).toString().padStart(2, "0")}:${r.toString().padStart(2, "0")}`;
+}
+
 export default async function ScriptReview({
   params,
 }: {
@@ -93,7 +103,14 @@ export default async function ScriptReview({
                 <span className="font-mono">#{i + 1}</span>
                 {s.outline_ref ? <span>↳ {s.outline_ref}</span> : null}
                 {s.asset_strategy ? (
-                  <span className="px-1.5 py-0.5 bg-neutral-100 dark:bg-neutral-800 rounded font-mono">
+                  <span
+                    className={
+                      "px-1.5 py-0.5 rounded font-mono " +
+                      (s.asset_strategy === "archival"
+                        ? "bg-blue-100 dark:bg-blue-950 text-blue-800 dark:text-blue-300"
+                        : "bg-neutral-100 dark:bg-neutral-800")
+                    }
+                  >
                     {s.asset_strategy}
                     {s.person_name ? ` · ${s.person_name}` : ""}
                   </span>
@@ -105,8 +122,46 @@ export default async function ScriptReview({
                   visual: {s.visual_brief_en}
                 </div>
               ) : null}
+              {s.asset_strategy === "archival" && (s.archival_source || s.archival_video_id) ? (
+                <div className="mt-1.5 text-xs border border-blue-200 dark:border-blue-900 bg-blue-50/40 dark:bg-blue-950/20 rounded p-2 space-y-0.5">
+                  <div className="flex items-baseline gap-2 flex-wrap">
+                    <span className="text-[10px] uppercase tracking-wider text-blue-700 dark:text-blue-400 font-semibold">
+                      archival
+                    </span>
+                    {s.archival_source ? (
+                      <span className="font-mono text-[10px] bg-blue-100 dark:bg-blue-900 px-1 rounded">
+                        {s.archival_source}
+                      </span>
+                    ) : null}
+                    {s.archival_video_id ? (
+                      <a
+                        href={
+                          s.archival_source === "bilibili"
+                            ? `https://www.bilibili.com/video/${s.archival_video_id}`
+                            : `https://www.youtube.com/watch?v=${s.archival_video_id}&t=${Math.floor(s.archival_start_sec ?? 0)}`
+                        }
+                        target="_blank"
+                        rel="noreferrer"
+                        className="font-mono text-[10px] underline hover:text-blue-900 dark:hover:text-blue-200"
+                      >
+                        {s.archival_video_id}
+                      </a>
+                    ) : null}
+                    {s.archival_start_sec !== undefined && s.archival_dur_sec !== undefined ? (
+                      <span className="text-[10px] text-neutral-600 dark:text-neutral-400 font-mono">
+                        @ {fmtSec(s.archival_start_sec)} for {s.archival_dur_sec}s
+                      </span>
+                    ) : null}
+                  </div>
+                  {s.archival_excerpt ? (
+                    <div className="text-xs text-neutral-700 dark:text-neutral-300">
+                      {s.archival_excerpt}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
               {s.purpose ? (
-                <div className="text-xs italic text-neutral-500">
+                <div className="text-xs italic text-neutral-500 mt-1">
                   purpose: {s.purpose}
                 </div>
               ) : null}
