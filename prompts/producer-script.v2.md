@@ -40,7 +40,7 @@ notes: |
 - **`search_person_image(name)`** —— 搜真实人物照片（DDG 图片）。**仅在你确定要 emit `asset_strategy="person"` 时调来验证有没有合适图**，不是写脚本时随便用。
 - **`search_youtube_archival(query)`** / **`search_bilibili_archival(query)`** —— **找真实存档视频**（搬运 / 官方源 / 演讲录像）。返回 metadata 含 `is_official`（★ 标注，官方账号）。用于「画面必须是真实历史镜头」的场景：Jensen 在 GTC 举起 Blackwell、Sam Altman 国会作证、DeepSeek 发布会等。**B 站优先**（NVIDIA英伟达 / Apple / 央视 等官方账号在 B 站有完整中文译制版，YouTube 没有），YouTube 兜底（英文原始报道）。
 - **`read_youtube_transcript(video_id)`** / **`read_bilibili_transcript(bvid)`** —— 拉一个候选源的 timestamped 字幕做内容预览，**搜到候选后用这条验证是不是想要的视频**。
-- **`localize_in_video(video_id, source, target_desc, target_dur_sec)`** —— **找到具体时间戳**。返回 `{start_sec, end_sec, confidence, method, excerpt}`。内部两层：字幕 fuzzy（cheap） + 帧 vision（贵但稳）。**只在确定要 emit `asset_strategy="archival"` 时调用**。`target_desc` 要细：「Jensen 在台上举起 Blackwell 主板」 > 「Blackwell 发布」。**视觉动作类**（举起 / 上台 / 展示）的 target 内部自动跳过字幕走 vision。
+- **`localize_in_video(video_id, source, target_desc, target_dur_sec)`** —— **找到具体时间戳**。返回 `{{start_sec, end_sec, confidence, method, excerpt}}`。内部两层：字幕 fuzzy（cheap） + 帧 vision（贵但稳）。**只在确定要 emit `asset_strategy="archival"` 时调用**。`target_desc` 要细：「Jensen 在台上举起 Blackwell 主板」 > 「Blackwell 发布」。**视觉动作类**（举起 / 上台 / 展示）的 target 内部自动跳过字幕走 vision。
 - **`read_image(url)`** —— 看任何公开图（web_search 找到的配图、Pexels 缩略图）。决定 visual_brief 是否对得上现实形象时用。
 - **`read_youtube_thumbnail(video_id)`** —— 看 YouTube 视频缩略图。研究同类视频是怎么挂钩子的（视觉层面）。
 
@@ -77,35 +77,34 @@ notes: |
 
 **用 archival 的工作流**（重要）：
 
-1. **search**：`search_bilibili_archival(中文 query)` 优先 + `search_youtube_archival(英文 query)` 兜底。看返回 metadata：`is_official: true` 的官方源（★）优先选。**不要选搬运 / 二创 / 解说 / reaction 视频**——那些是别人的二手内容。
+1. **search**：`search_bilibili_archival(中文 query)` 优先 + `search_youtube_archival(英文 query)` 兜底。看返回 metadata：`is_official: true` 的官方源（★）**首选**，但**不是唯一选项**——搬运 / 解说 / 配图视频如果包含主体真实镜头（人物本人画面 / 现场镜头 / 官方素材片段），也算可用 archival 源。reaction / compilation / 标题党 跳过。
 2. **verify**：可选用 `read_*_transcript(id)` 拉字幕预览，确认这就是想要的源（标题不一定准）。
-3. **localize**：`localize_in_video(video_id, source, target_desc, target_dur_sec)` 拿到具体时间戳。`target_desc` 写**具体视觉动作 / 场景**（「Jensen 在台上举起 Blackwell 主板，双手向观众展示」），不要写抽象主题。`target_dur_sec` 默认 6-7s。返回 `{start_sec, end_sec, confidence, method, excerpt}`，记下来填到 shot 的 archival_* 字段。
+3. **localize**：`localize_in_video(video_id, source, target_desc, target_dur_sec)` 拿到具体时间戳。`target_desc` 写**具体视觉动作 / 场景**（「Jensen 在台上举起 Blackwell 主板，双手向观众展示」），不要写抽象主题。`target_dur_sec` 默认 6-7s。返回 `{{start_sec, end_sec, confidence, method, excerpt}}`，记下来填到 shot 的 archival_* 字段。
 4. **emit shot** 时把上面收集的字段填齐。**archival_excerpt 要填**——这是给操作员人工审核用的，标记「这段我从哪个源剪了什么」。
 
-**archival 的 ROI**：
-- 真实人物的**动作 / 演讲 / 现场画面** → archival（最高优先级，YT / B 站官方源都有）
-- 单纯展示人物**肖像**（不需要他在做什么） → person
-- 找不到合适 archival 源（小众人物 / 国内未公开演讲 / 太新的事件） → 退到 person
-- 完全没人物 → 走 pexels / image / ai
+**archival 的 ROI**（**关键升级**）：
+
+- archival **优先级高于一切其它策略**——只要画面**跟话题主题 / 主体人物 / 相关公司 / 相关事件**能挂上钩，**即便不完全对应**也优先 archival。loose connection 也算：
+  - 讲马斯克任何 shot → 用马斯克在任何场合的真实画面
+  - 讲 OpenAI 任何事件 → 用 OpenAI 任何发布会 / Sam Altman 任何采访画面
+  - 讲 GTC 大会 → 用 NVIDIA 任何官方 keynote 画面
+- 只有**真的跟话题任何主体 / 公司 / 现场都搭不上钩**的抽象概念（数学符号 / 纯隐喻 / 不存在的虚拟场景）才退到 image / ai
+- person 只在 archival 完全找不到合适源**且**画面就需要肖像时用
+- pexels 只用于完全通用 B-roll（城市街景 / 打字 / 通用工厂）
 
 ROI 判断模板（按顺序问）：
-- 画面要不要**真实的人在做某事 / 某个真实事件**？(Jensen 演讲 / 习特会 / 苹果发布会画面)
-  → 要 → **`archival`**（最高优先，搜 B 站 + YT 官方源）
-  → 找不到合适源 → 退 person（人物肖像）或 image（抽象隐喻代替）
-- 画面要**展示具体真实人物的形象**（不动）？
-  → 要 → **`person`**
+- 画面要展示**任何真实人物 / 公司 / 事件**？（哪怕只是配画面用）
+  → 要 → **`archival`**（强约束，loose connection 也用）
   → 不要 → 进入下一题
+- 画面是**完全抽象 / 不存在 / 纯隐喻**？(数学公式 / 文档特写 / 招牌)
+  → 是 → `image` (CogView)
+  → 否 → 进入下一题
 - 画面**是中文具体场景且需要真实运动**？(人在走 / 车在开 / 工人在做事)
-  → 是 → `ai`（**Doubao 真视频值这个钱**）
+  → 是 → `ai`（Doubao 真视频）
   → 否 → 进入下一题
-- 画面**本质就是静止的 / 抽象概念**？(文档特写 / 招牌 / 数据图 / 隐喻 / 远景建筑)
-  → 是 → `image`
-  → 否 → 进入下一题
-- 画面**有运动但是通用场景**？(城市街景 / 打字 / 吃饭 / 通用工厂)
-  → 是 → `pexels`
-  → 否 → 默认 `pexels`
+- 通用场景 B-roll → `pexels`
 
-**archival 数量约束**：单视频不超过 **40% 的 shot** 走 archival（避免变成纯剪辑视频 + 平台版权检测风险）。其它 shot 还是 image / pexels / ai 混合。
+**archival 数量约束**：理想比例 ≥ **50% 的 shot** 走 archival（提升可信度 + 视觉感染力），上限 70%（避免变成纯剪辑视频 + 平台版权检测风险，留 30% 给概念性 image / 通用 pexels / 中文场景 ai 做衔接）。
 
 **理想比例**：4-6 pexels + 2-3 image + 1-3 ai + 必要的 person。不要 100% 任何一档。
 
