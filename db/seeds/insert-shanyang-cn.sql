@@ -69,6 +69,12 @@ VALUES (
         "硬核"
       ],
       "must_include_disclaimer": false,
+      "outro": {
+        "text_line1_zh": "想看更多深度观察",
+        "text_line2_zh": "点赞关注，下条见",
+        "background_prompt_en": "abstract cinematic background, restrained deep slate blue and graphite gradient with a subtle warm amber accent on the horizon, contemplative and journalistic atmosphere, very minimalist, no text no faces no objects, premium documentary aesthetic",
+        "duration_sec": 3
+      },
       "style_exemplars": {
         "ref_bvids": ["BV12T4y1F7LT", "BV1Su411a7A3", "BV1KkRZBGEwi"],
         "dynamic": {
