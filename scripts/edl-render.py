@@ -750,6 +750,61 @@ PLATFORM_SPEC: dict[str, dict] = {
 }
 
 
+OUTROS_DIR = Path("/video/youtube-clips/outros")
+
+
+def maybe_append_outro(
+    main_path: Path,
+    out_path: Path,
+    target_w: int,
+    target_h: int,
+    profile_name: str | None,
+    is_vertical: bool,
+) -> bool:
+    """If a channel-specific outro mp4 exists, concat it onto the end of
+    `main_path` → `out_path`. Returns True if outro was appended.
+
+    Outros live at /video/youtube-clips/outros/<profile_name>{-douyin}.mp4
+    and are silent — we synthesize silent audio at concat time to satisfy
+    ffmpeg's per-input stream-count requirement. Outro source dims may
+    differ from the render's; we scale-pad here so concat filter is happy.
+
+    The function is no-op (returns False) when profile_name is missing or
+    no outro file exists — operator opt-in per channel.
+    """
+    if not profile_name:
+        return False
+    suffix = "-douyin" if is_vertical else ""
+    outro_mp4 = OUTROS_DIR / f"{profile_name}{suffix}.mp4"
+    if not outro_mp4.exists():
+        return False
+    outro_dur = ffprobe_duration(outro_mp4)
+    print(f"  appending outro ({outro_dur:.1f}s): {outro_mp4.name}")
+    # generate-outro.py renders at the same dims / codec / fps / audio
+    # config as edl-render, so concat demuxer with -c copy stitches without
+    # re-encoding the whole video (sub-second vs filter-complex which would
+    # spend 5+ min re-encoding a 4-min render).
+    list_file = out_path.with_suffix(".concat.txt")
+    list_file.write_text(
+        f"file '{main_path}'\nfile '{outro_mp4}'\n", encoding="utf-8"
+    )
+    subprocess.run(
+        [
+            "ffmpeg", "-y", "-loglevel", "error",
+            "-f", "concat", "-safe", "0",
+            "-i", str(list_file),
+            "-c", "copy",
+            str(out_path),
+        ],
+        check=True,
+    )
+    try:
+        list_file.unlink()
+    except FileNotFoundError:
+        pass
+    return True
+
+
 def transform_to_vertical(in_path: Path, out_path: Path,
                           target_w: int = 720, target_h: int = 1280) -> None:
     """Letterbox transform 16:9 → 9:16 with blurred background fill.
@@ -1065,6 +1120,14 @@ def main() -> int:
         burn_subs(burn_input, ass_path, out)
         done(label)
         events.emit(run_id, "render_subs", "done", f"{platform}: {out.name}")
+        # 2b. Append channel outro if configured. We render to a temp first
+        # then atomically move on top of `out` so the DB-tracked path doesn't
+        # change. No-op (silent) when the channel has no outro mp4.
+        profile_name = edl.get("profile_name")
+        outro_tmp = work_dir / f"{platform}-with-outro.mp4"
+        if maybe_append_outro(out, outro_tmp, tgt_w, tgt_h, profile_name, is_vertical):
+            outro_tmp.replace(out)
+            events.emit(run_id, "render_outro", "done", f"{platform}: outro appended")
         # 3. Persist outputs row per platform
         out_dur = ffprobe_duration(out)
         out_size = out.stat().st_size

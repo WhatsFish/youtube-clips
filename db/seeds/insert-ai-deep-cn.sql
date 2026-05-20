@@ -81,6 +81,12 @@ VALUES (
         "奥特曼"
       ],
       "must_include_disclaimer": false,
+      "outro": {
+        "text_line1_zh": "深入了解 AI 浪潮的人物 / 技术 / 事件",
+        "text_line2_zh": "点赞关注，下条见",
+        "background_prompt_en": "abstract minimalist cinematic background, deep navy blue gradient transitioning to warm amber on the horizon, subtle soft light particles floating, very dark and elegant, no text no faces no objects, premium tech documentary aesthetic, ultra wide composition",
+        "duration_sec": 5
+      },
       "style_exemplars": {
         "ref_bvids": ["BV1AbwSzeEKD", "BV1a5QRYCE5j"]
       },
