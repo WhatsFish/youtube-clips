@@ -14,6 +14,14 @@ export type Shot = {
   archival_start_sec?: number;
   archival_dur_sec?: number;
   archival_excerpt?: string;     // human-readable description of the clip content
+  // Multi-clip mode (preferred when narration covers multiple subjects):
+  archival_clips?: {
+    source: string;
+    video_id: string;
+    start_sec: number;
+    dur_sec: number;
+    excerpt?: string;
+  }[];
   outline_ref?: string;
 };
 

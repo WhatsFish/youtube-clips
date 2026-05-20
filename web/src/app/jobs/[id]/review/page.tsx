@@ -122,7 +122,49 @@ export default async function ScriptReview({
                   visual: {s.visual_brief_en}
                 </div>
               ) : null}
-              {s.asset_strategy === "archival" && (s.archival_source || s.archival_video_id) ? (
+              {s.asset_strategy === "archival" && s.archival_clips && s.archival_clips.length > 0 ? (
+                <div className="mt-1.5 text-xs border border-blue-200 dark:border-blue-900 bg-blue-50/40 dark:bg-blue-950/20 rounded p-2 space-y-1.5">
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-[10px] uppercase tracking-wider text-blue-700 dark:text-blue-400 font-semibold">
+                      archival · multi-clip
+                    </span>
+                    <span className="text-[10px] text-neutral-500">
+                      {s.archival_clips.length} segments,{" "}
+                      {s.archival_clips.reduce((a, c) => a + c.dur_sec, 0).toFixed(1)}s total
+                    </span>
+                  </div>
+                  <ol className="space-y-0.5">
+                    {s.archival_clips.map((c, j) => (
+                      <li key={j} className="flex items-baseline gap-2 flex-wrap">
+                        <span className="text-[10px] text-neutral-500 font-mono">[{j + 1}]</span>
+                        <span className="font-mono text-[10px] bg-blue-100 dark:bg-blue-900 px-1 rounded">
+                          {c.source}
+                        </span>
+                        <a
+                          href={
+                            c.source === "bilibili"
+                              ? `https://www.bilibili.com/video/${c.video_id}`
+                              : `https://www.youtube.com/watch?v=${c.video_id}&t=${Math.floor(c.start_sec)}`
+                          }
+                          target="_blank"
+                          rel="noreferrer"
+                          className="font-mono text-[10px] underline hover:text-blue-900 dark:hover:text-blue-200"
+                        >
+                          {c.video_id}
+                        </a>
+                        <span className="text-[10px] text-neutral-600 dark:text-neutral-400 font-mono">
+                          @ {fmtSec(c.start_sec)} · {c.dur_sec}s
+                        </span>
+                        {c.excerpt ? (
+                          <span className="text-xs text-neutral-700 dark:text-neutral-300">
+                            — {c.excerpt}
+                          </span>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+              ) : s.asset_strategy === "archival" && (s.archival_source || s.archival_video_id) ? (
                 <div className="mt-1.5 text-xs border border-blue-200 dark:border-blue-900 bg-blue-50/40 dark:bg-blue-950/20 rounded p-2 space-y-0.5">
                   <div className="flex items-baseline gap-2 flex-wrap">
                     <span className="text-[10px] uppercase tracking-wider text-blue-700 dark:text-blue-400 font-semibold">

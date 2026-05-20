@@ -204,8 +204,13 @@ def _script(profile, topic: str, outline: dict, job_dir: Path) -> dict:
     if use_tools:
         raw = call_claude(
             prompt,
-            timeout=900,
-            max_turns=12,
+            # Stage 2 with archival tools: agent may call localize_in_video
+            # 3-5 times for archival shots; each can hit the vision path
+            # (~5 min: 5 batched Claude vision calls + fine pass). 4 archival
+            # shots ≈ 20 min just on localize. Bump from 15min → 40min and
+            # max_turns up so agent doesn't run out before deciding.
+            timeout=2400,
+            max_turns=30,
             mcp_config=DEFAULT_MCP_CONFIG,
             mcp_tools=DEFAULT_MCP_TOOLS,
         )
@@ -617,32 +622,87 @@ def _acquire_one_person(
     }
 
 
+def _ffmpeg_cut_archival(src_mp4: Path, start: float, dur: float, target: Path) -> None:
+    """Cut [start, start+dur] from a source video into target. Strips audio
+    so renderer's narration mix is unaffected. H.264 re-encoded so multi-
+    clip concat doesn't trip on codec / SAR mismatches across sources."""
+    subprocess.run(
+        [
+            "ffmpeg", "-y", "-loglevel", "error",
+            "-ss", f"{start:.3f}",
+            "-i", str(src_mp4),
+            "-t", f"{dur:.3f}",
+            # Force 30fps + 1280x720 so concat across YT/B站 sources matches
+            # whatever the renderer downstream expects. Pad letterbox if
+            # aspect differs.
+            "-vf", "scale=1280:720:force_original_aspect_ratio=decrease,"
+                   "pad=1280:720:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-an",
+            "-preset", "fast", "-crf", "23",
+            str(target),
+        ],
+        check=True,
+    )
+
+
+def _ffmpeg_concat_clips(parts: list[Path], target: Path) -> None:
+    """Concat multiple cut clips into one. All parts must share codec /
+    SAR / fps — _ffmpeg_cut_archival enforces this so concat demuxer works
+    (much faster than -filter_complex concat re-encoding everything).
+    """
+    list_file = target.with_name(target.stem + "_concat.txt")
+    list_file.write_text(
+        "\n".join(f"file '{p}'" for p in parts), encoding="utf-8"
+    )
+    subprocess.run(
+        [
+            "ffmpeg", "-y", "-loglevel", "error",
+            "-f", "concat", "-safe", "0",
+            "-i", str(list_file),
+            "-c", "copy",
+            str(target),
+        ],
+        check=True,
+    )
+    try:
+        list_file.unlink()
+    except FileNotFoundError:
+        pass
+
+
 def _acquire_one_archival(
     sh: dict,
     i: int,
     assets_dir: Path,
     run_id: int | None = None,
 ) -> dict:
-    """Extract a 5-8s segment from a real archival source video.
+    """Extract archival footage for one shot.
 
-    Reads the shot's archival_* fields (set by the agent during Stage 2
-    after calling search_*_archival + localize_in_video), downloads the
-    source (cached) and cuts the requested time range, strips audio
-    so renderer's narration mix is unaffected.
+    Two modes:
+      - **Single clip** (legacy): shot has archival_source / archival_video_id /
+        archival_start_sec / archival_dur_sec. Cut one segment.
+      - **Multi-clip** (preferred when narration covers multiple subjects):
+        shot has archival_clips: [{source, video_id, start_sec, dur_sec, excerpt}, ...].
+        Cut each segment then ffmpeg concat into a single mp4. Use this when
+        a shot says e.g. "1X / Agility / 宇树 各自做 X / Y / Z" — agent emits
+        3 short clips, one per subject.
 
-    Hard cap: dur ≤ 8s (fair-use buffer).
-
-    Required shot fields:
-      - archival_source       "youtube" | "bilibili"
-      - archival_video_id     BVid or 11-char YouTube id
-      - archival_start_sec    float
-      - archival_dur_sec      float (capped to 8 here)
+    Hard caps: per-clip dur 2-15s; max 4 clips per shot. Total dur derived
+    from sum of clips for multi-mode.
 
     Raises ValueError when fields missing — dispatcher falls back to
     person/pexels.
     """
     from pipeline.archival import ensure_downloaded
 
+    # Detect multi-clip vs single-clip mode
+    clips_input = sh.get("archival_clips") or []
+    if clips_input:
+        return _acquire_archival_multi(sh, i, assets_dir, clips_input, ensure_downloaded)
+    return _acquire_archival_single(sh, i, assets_dir, ensure_downloaded)
+
+
+def _acquire_archival_single(sh: dict, i: int, assets_dir: Path, ensure_downloaded) -> dict:
     arch_source = (sh.get("archival_source") or "").strip()
     arch_vid = (sh.get("archival_video_id") or "").strip()
     arch_start = sh.get("archival_start_sec")
@@ -657,7 +717,11 @@ def _acquire_one_archival(
             f"shot {i}: archival_start_sec or archival_dur_sec missing"
         )
     arch_start = float(arch_start)
-    arch_dur = max(2.0, min(8.0, float(arch_dur)))   # hard cap [2, 8] seconds
+    # Hard cap raised 8 → 15s. Agent should emit archival_dur_sec matching
+    # the shot's narration TTS duration (~4 Chinese chars / second + 1s
+    # headroom). Renderer trims to actual TTS dur; over-cutting wastes a
+    # little disk but avoids loop-on-undersized which looks worse.
+    arch_dur = max(2.0, min(15.0, float(arch_dur)))
 
     print(
         f"  s{i:02d} archival ({arch_source}:{arch_vid}) @ "
@@ -667,24 +731,10 @@ def _acquire_one_archival(
     src_mp4 = ensure_downloaded(arch_vid, arch_source)
     print(f"  s{i:02d} source ready in {time.monotonic()-t0:.0f}s: {src_mp4}")
 
-    # Cut the segment. Strip audio (our narration mix is separate).
     target = assets_dir / f"clip-{i:02d}-archival-{arch_source}-{arch_vid}.mp4"
     t1 = time.monotonic()
-    subprocess.run(
-        [
-            "ffmpeg", "-y", "-loglevel", "error",
-            "-ss", f"{arch_start:.3f}",
-            "-i", str(src_mp4),
-            "-t", f"{arch_dur:.3f}",
-            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-an",
-            "-preset", "fast", "-crf", "23",
-            str(target),
-        ],
-        check=True,
-    )
-    print(
-        f"  s{i:02d} archival cut ready in {time.monotonic()-t1:.0f}s: {target}"
-    )
+    _ffmpeg_cut_archival(src_mp4, arch_start, arch_dur, target)
+    print(f"  s{i:02d} archival cut ready in {time.monotonic()-t1:.0f}s: {target}")
 
     actual_dur = _ffprobe_seconds(target)
     page_url = (
@@ -704,6 +754,78 @@ def _acquire_one_archival(
         "archival_source": arch_source,
         "archival_video_id": arch_vid,
         "archival_start_sec": arch_start,
+    }
+
+
+def _acquire_archival_multi(
+    sh: dict, i: int, assets_dir: Path,
+    clips_input: list[dict], ensure_downloaded,
+) -> dict:
+    """Multi-clip path: cut each segment, ffmpeg concat into one mp4."""
+    if len(clips_input) < 2:
+        raise ValueError(
+            f"shot {i}: archival_clips has only {len(clips_input)} entry — "
+            f"use single-clip fields instead"
+        )
+    if len(clips_input) > 4:
+        # Cap at 4 sub-clips per shot (matches our 「2-4」 prompt guidance;
+        # more than 4 is harder to follow in 8-15s of narration).
+        clips_input = clips_input[:4]
+
+    print(f"  s{i:02d} archival multi-clip: {len(clips_input)} segments")
+    parts: list[Path] = []
+    sources_used: list[str] = []
+    total_dur = 0.0
+    for j, c in enumerate(clips_input):
+        c_source = (c.get("source") or "").strip()
+        c_vid = (c.get("video_id") or "").strip()
+        c_start = c.get("start_sec")
+        c_dur = c.get("dur_sec")
+        if c_source not in ("youtube", "bilibili") or not c_vid:
+            raise ValueError(
+                f"shot {i} clip {j}: source / video_id missing "
+                f"(got source={c_source!r}, vid={c_vid!r})"
+            )
+        if c_start is None or c_dur is None:
+            raise ValueError(
+                f"shot {i} clip {j}: start_sec / dur_sec missing"
+            )
+        c_start = float(c_start)
+        # Per-sub-clip cap [1.5, 6]s — multi-clip is for "punchy mosaic",
+        # any single sub-clip > 6s would be better as a single-clip shot.
+        c_dur = max(1.5, min(6.0, float(c_dur)))
+        print(
+            f"    [{j}] {c_source}:{c_vid} @ {c_start:.1f}s for {c_dur:.1f}s"
+            f"  — {(c.get('excerpt') or '')[:55]}"
+        )
+        t0 = time.monotonic()
+        src_mp4 = ensure_downloaded(c_vid, c_source)
+        part = assets_dir / f"clip-{i:02d}-archival-part{j}-{c_source}-{c_vid}.mp4"
+        _ffmpeg_cut_archival(src_mp4, c_start, c_dur, part)
+        print(f"    [{j}] cut ready in {time.monotonic()-t0:.0f}s")
+        parts.append(part)
+        sources_used.append(f"{c_source}:{c_vid}")
+        total_dur += c_dur
+
+    target = assets_dir / f"clip-{i:02d}-archival-multi.mp4"
+    print(f"  s{i:02d} concatenating {len(parts)} parts into {target}")
+    _ffmpeg_concat_clips(parts, target)
+    actual_dur = _ffprobe_seconds(target)
+    print(
+        f"  s{i:02d} archival multi-clip ready: {actual_dur:.1f}s "
+        f"({len(parts)} parts, sources: {sources_used})"
+    )
+
+    return {
+        "video_id": f"archival-multi-{i:02d}",
+        "title": sh.get("archival_excerpt") or f"multi-clip {len(parts)} sources",
+        "channel": "archival (multi-clip)",
+        "role": "primary" if i == 0 else "supplement",
+        "path": str(target),
+        "duration_sec": actual_dur,
+        "page_url": None,  # multi-source — no single canonical URL
+        "asset_strategy": "archival",
+        "archival_clips_count": len(parts),
     }
 
 
@@ -939,6 +1061,7 @@ def _run_phase_script(*, profile, topic: str) -> dict:
             "archival_start_sec": sh.get("archival_start_sec"),
             "archival_dur_sec": sh.get("archival_dur_sec"),
             "archival_excerpt": sh.get("archival_excerpt"),
+            "archival_clips": sh.get("archival_clips"),
         })
     edl = {
         "decision": "make",

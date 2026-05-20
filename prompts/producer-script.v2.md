@@ -73,7 +73,9 @@ notes: |
 - `"image"`（**静态画面 / 隐喻 / 不需要运动的场景**）—— CogView 文生图 + ken-burns 推拉。免费、~10s 出图、右下小水印。**只适合本质就是静态的画面**：文档 / 招牌 / 静物 / 海报 / 抽象隐喻 / 远景建筑。**不要用 image 画具体真实人物**——CogView 会画歪、政治人物可能被审核拦。
 - `"ai"`（**需要真实运动的中文场景**）—— Doubao Seedance 1.0-pro-fast，~$0.06/5s clip，~24s 生成。**真视频，有自然运动**：动作 / 人流 / 车流 / 风吹动。**不要用 ai 画具体真实人物**——同样会画歪。
 - **`"person"`（具体真实人物的静态形象）**—— DDG 图片搜索拿真实公开照片 + ken-burns。**任何有名有姓的真实人物**（鲍威尔、沃什、马斯克、习近平、特朗普、某某 CEO/学者）的肖像 shot 走这一档。schema 多填 `person_name` 字段。
-- **`"archival"`（真实历史镜头 / 现场录像）** —— 从 YouTube / Bilibili 已有视频里**剪取真实的 5-8s 片段**。用于「这个人物做了某件事 / 这个事件发生时的画面」——Jensen 在 GTC 上举起 Blackwell、Sam Altman 国会作证、DeepSeek 发布会、习特会握手等。**比 person 更强**：person 只是静态照片 + 假动画，archival 是**真实视频画面**，可信度 + 表现力都高一档。schema 要填：`archival_source` (youtube|bilibili) / `archival_video_id` (BVid 或 YT id) / `archival_start_sec` / `archival_dur_sec` (≤ 8) / `archival_excerpt` (人类可读的内容描述)。
+- **`"archival"`（真实历史镜头 / 现场录像）** —— 从 YouTube / Bilibili 已有视频里**剪取真实片段**。用于「这个人物做了某件事 / 这个事件发生时的画面」——Jensen 在 GTC 上举起 Blackwell、Sam Altman 国会作证、DeepSeek 发布会、习特会握手等。**比 person 更强**：person 只是静态照片 + 假动画，archival 是**真实视频画面**，可信度 + 表现力都高一档。**两种填法**（按 shot narration 选）：
+  - **单 clip**（narration 围绕单一主体 / 事件）：填 `archival_source` / `archival_video_id` / `archival_start_sec` / `archival_dur_sec` / `archival_excerpt`。**dur_sec 要匹配 narration 估算时长**——中文字数 ÷ 4 + 1s 余量（30 字 narration → dur 8-10s）。**单 clip cap 15s**。dur 太短会循环重播看着不自然；太长会被截断不浪费。
+  - **多 clip 拼接**（narration 横跨多个主体 / 事件 / 公司）：填 `archival_clips: [{source, video_id, start_sec, dur_sec, excerpt}, ...]`，2-4 段，每段 1.5-6s，总和接近 narration 时长。**典型场景**：narration 是 "1X 主攻家庭场景，Agility 切仓储，宇树从机器狗起家" → 3 段分别覆盖 1X / Agility / 宇树，比用 Agility 一段画面盖 3 个主角自然得多。**多 clip 优先于单 clip**——但凡 narration 提了 ≥2 个不同主体，就该拼。
 
 **用 archival 的工作流**（重要）：
 
@@ -175,11 +177,12 @@ JSON schema:
       "visual_brief_en": "按 asset_strategy 长度不同，见上方说明",
       "asset_strategy": "pexels" | "image" | "ai" | "person" | "archival",
       "person_name": "（仅当 asset_strategy=person 时填，国际人物用英文）",
-      "archival_source": "（仅当 archival 时填）youtube | bilibili",
-      "archival_video_id": "（仅当 archival 时填）BVid 或 11 位 YouTube id",
-      "archival_start_sec": "（仅当 archival 时填）整数 / 浮点秒",
-      "archival_dur_sec": "（仅当 archival 时填）4-8 秒，硬封顶 8",
-      "archival_excerpt": "（仅当 archival 时填）人类可读的内容描述，给操作员审核用",
+      "archival_source": "（archival 单 clip 模式）youtube | bilibili",
+      "archival_video_id": "（archival 单 clip 模式）BVid 或 11 位 YouTube id",
+      "archival_start_sec": "（archival 单 clip 模式）整数 / 浮点秒",
+      "archival_dur_sec": "（archival 单 clip 模式）匹配 narration 估算时长（中文字数÷4+1s），cap 15s",
+      "archival_excerpt": "（archival 单 clip 模式）人类可读内容描述，操作员审核用",
+      "archival_clips": "（archival 多 clip 拼接模式，narration 跨多主体时用）[{source, video_id, start_sec, dur_sec, excerpt}, ...] 2-4 段，每段 1.5-6s，与单 clip 字段二选一",
       "outline_ref": "对应 OUTLINE.outline 索引（0-based）",
       "purpose": "选这段画面的原因"
     }}
